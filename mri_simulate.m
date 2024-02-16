@@ -29,7 +29,7 @@ function mri_simulate(simu, rf)
 %     - atrophy: Cell structure that specifies atlas, ROIs and values for simulating atrophy 
 %         within these ROIs. Multiple ROIs and the respective atrophy values can be defined.
 %         An atrophy value of 1.5 leads to a GM reduction of about 5%, while a value of 2 corresponds to around 10% 
-%         and 3 to around 15%. Plese note, that this option takes a lot of time because the atlas labels have to
+%         and 3 to around 15%. Please note, that this option takes a lot of time because the atlas labels have to
 %         be interpolated using categorical interpolation (i.e. each label seperately). Either thickness or atrophy 
 %         can be simulated.
 %     - thickness: The WM label of the image is used to add a layer of GM with a defined cortical thickness to have 
@@ -52,8 +52,8 @@ function mri_simulate(simu, rf)
 %
 % Optional Inputs:
 %   If 'simu' or 'rf' are not provided, they are set to default values:
-%     simu: {,'name','colin27_t1_tal_hires.nii','pn': 1, 'resolution': 1, 'vessel': 0, 'WMH': 0, 'T2': 0, 'atrophy': {'hammers', [28 29], [1.5 3]}, 'rng', 0}
-%     rf: {'percent': 20, 'type': [2 0]}
+%     simu = {'name','colin27_t1_tal_hires.nii','pn': 1, 'resolution': 1, 'vessel': 0, 'WMH': 0, 'T2': 0, 'atrophy': {'hammers', [28 29], [1.5 3]}, 'rng', 0};
+%     rf = {'percent': 20, 'type': [2 0]};
 %
 % Output:
 %   The function produces a simulated MRI image file with the specified features and parameters.
