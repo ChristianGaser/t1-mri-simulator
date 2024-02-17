@@ -1,71 +1,99 @@
 function mri_simulate(simu, rf)
 % MRI_SIMULATE - Simulates MR images with various optional features
 %
+% Overview:
+%   `mri_simulate` generates simulated MRI images, allowing for T1-weighted
+%   (T1w) or T2-weighted (T2w) imaging simulations. It employs a high-resolution
+%   (e.g., 0.5mm) T1w image, typically Colin27, as a base. Users can introduce
+%   various artifacts and features like vessels, white matter hyperintensities
+%   (WMHs), Gaussian noise, and RF B1 inhomogeneities. It supports simulations
+%   of atrophy or cortical thickness modifications. Preprocessing with SPM12 and
+%   CAT12 segmentation is required for custom images.
+%   If you intend to use any other image for simulation you have to run these 
+%   steps first:
+%     - call SPM12 segmentation
+%     - call CAT12 segmentation in expert mode: save GM, WM, and CSF in native 
+%       space and deformation field Image->Template (forward)
+%
 % Syntax:
 %   mri_simulate(simu, rf)
 %
-% Description:
-%   This function simulates T1-weighted (T1w) or T2-weighted (T2w) MRI images
-%   based on a high-quality (i.e. 0.5mm spatial resolution) T1w image. By default
-%   Colin27 is used for simulation. The function allows for the inclusion of various 
-%   features in the simulated image such as vessels (only for Colin27), white matter 
-%   hyperintensities (WMHs), Gaussian noise, radiofrequency (RF) B1 inhomogeneities 
-%   (bias field), and options for atrophy or thickness simulation.
-%   If you intend to use any other image for simulation you have to run these steps first:
-%     - call SPM12 segmentation
-%     - call CAT12 segmentation in expert mode: save GM, WM, and CSF in native space and deformation 
-%       field Image->Template (forward)
-%
-% Inputs:
-%   simu: A structure containing simulation parameters.
-%     - name: Name of T1w input image.
-%     - pn: Percentage noise level.
-%     - rng: Controls the random number generator for consistent noise; empty for default behavior.
-%     - resolution: Spatial resolution of the simulated image (either a scalar or an xyz-definition
-%         for anisotropic voxel size).
-%     - vessel: Boolean flag to add vessels (for T1 image only).
-%     - WMH: Boolean flag to add white matter hyperintensities.
-%     - T2: Boolean flag to simulate a T2-weighted image (only possible for Colin27).
-%     - atrophy: Cell structure that specifies atlas, ROIs and values for simulating atrophy 
-%         within these ROIs. Multiple ROIs and the respective atrophy values can be defined.
-%         An atrophy value of 1.5 leads to a GM reduction of about 5%, while a value of 2 corresponds to around 10% 
-%         and 3 to around 15%. Please note, that this option takes a lot of time because the atlas labels have to
-%         be interpolated using categorical interpolation (i.e. each label seperately). Either thickness or atrophy 
-%         can be simulated.
-%     - thickness: The WM label of the image is used to add a layer of GM with a defined cortical thickness to have 
-%         constant thickness. Unlike all other simulations, we can only use the modified label image 
-%         for the MRI simulation and not the tissue probabilities (which give a more detailed and realistic T1w image).
-%         Either a scalar value for global constant thickness or a vector with 3 thickness values can be defined
-%         for the occipital and frontal lobes (1st and 3rd values) and the rest of the brain (2nd value). The 
-%         Hammer atlas is used to define these areas, as well as subcortical areas and the cerebellum, which are 
-%         excluded from the thickness simulation to obtain a more realistic MRI. Either thickness or atrophy can be simulated.
-%     - save: If set to 1 the grounf truth label will be saved.
-%   rf: A structure containing RF bias field parameters.
-%     - percent: The amplitude of bias field, in percent. Negative values invert the field.
-%     - type: Specifies the bias field type, options are 'A', 'B', or 'C' for predefined fields from MNI or an
-%         integer array with two numbers. The first integer value adjusts the local strength of the field by varying 
-%         maximum frequencies of the FFT. Meaningful values are 1..4, while a value of 3 or 4 corresponds to a bias field
-%         of a 7T scanner (without further correction such as in mp2rage). The second integer sets the random generator to 
-%         that seed value, which allows simulating different bias fields.
-%     - save: If type is a numeric array the simulated bias field can be optionally saved if this value is set to 1.
-%       
+% Parameters:
+%   simu (struct): Simulation parameters.
+%       - 'name' (string): Filename of the T1w input image.
+%       - 'pn' (double): Percentage noise level to introduce Gaussian noise.
+%       - 'rng' (double or []): Seed for the random number generator; use []
+%         for MATLAB's default behavior.
+%       - 'resolution' (double or [x, y, z]): Spatial resolution of the
+%         simulated image.
+%       - 'vessel' (logical): Flag to add vessels to the T1 image. Only
+%         applicable for Colin27.
+%       - 'WMH' (logical): Flag to add white matter hyperintensities.
+%       - 'T2' (logical): Flag for simulating a T2-weighted image. Only works
+%         with Colin27.
+%       - 'atrophy' (cell): Specifies regions of interest (ROIs) for simulating
+%         atrophy, including atlas name, ROI IDs, and atrophy values. Multiple ROIs 
+%         and the respective atrophy values can be defined. An atrophy value of 
+%         1.5 leads to a GM reduction of about 5%, while a value of 2 corresponds 
+%         to around 10% and 3 to around 15%. Please note, that this option takes 
+%         a lot of time because the atlas labels have to be interpolated using 
+%         categorical interpolation (i.e. each label seperately). Either thickness 
+%         or atrophy can be simulated.
+%       - 'thickness' (double or [double double double]): Specifies the cortical 
+%         thickness for simulation. The WM label of the image is used to add a 
+%         layer of GM with a defined cortical thickness to have constant thickness. 
+%         Unlike all other simulations, we can only use the modified label image 
+%         for the MRI simulation and not the tissue probabilities (which give a 
+%         more detailed and realistic T1w image).
+%         Either a scalar value for global constant thickness or a vector with 
+%         3 thickness values can be defined for the occipital and frontal lobes 
+%         (1st and 3rd values) and the rest of the brain (2nd value). The 
+%         Hammer atlas is used to define these areas, as well as subcortical areas 
+%         and the cerebellum, which are excluded from the thickness simulation to 
+%         obtain a more realistic MRI. Either thickness or atrophy can be simulated.
+%       - 'save' (logical): Flag to save the ground truth label if set to 1.
+%   rf (struct): RF bias field parameters.
+%       - 'percent' (double): Amplitude of the bias field in percentage.
+%         Negative values invert the field.
+%       - 'type' (char or [int, int]): Specifies the bias field type, options are 
+%         'A', 'B', or 'C' for predefined fields from MNI or an integer array with 
+%         two numbers. The first integer value adjusts the local strength of the 
+%         field by varying maximum frequencies of the FFT. Meaningful values are 
+%         1..4, while a value of 3 or 4 corresponds to a bias field of a 7T scanner 
+%         (without further correction such as in mp2rage). The second integer sets 
+%         the random generator to that seed value, which allows simulating different 
+%         bias fields.
+%       - 'save' (logical): Option to save the simulated bias field if 'type' is
+%         numeric and 'save' is set to 1.       
 %
 % Optional Inputs:
-%   If 'simu' or 'rf' are not provided, they are set to default values:
-%     simu = {'name','colin27_t1_tal_hires.nii','pn': 1, 'resolution': 1, 'vessel': 0, 'WMH': 0, 'T2': 0, 'atrophy': {'hammers', [28 29], [1.5 3]}, 'rng', 0};
-%     rf = {'percent': 20, 'type': [2 0]};
+%   Default values are used if 'simu' or 'rf' parameters are not provided. See
+%   examples for default structures.
 %
-% Output:
-%   The function produces a simulated MRI image file with the specified features and parameters.
+% Outputs:
+%   Simulated MRI image file based on the specified parameters and features.
 %
 % Usage:
-%   mri_simulate(simu, rf);
+%   To simulate an MRI, specify the simulation (`simu`) and RF bias field
+%   (`rf`) parameters:
+%       mri_simulate(simu, rf);
 %
 % Examples:
-%   simu = struct('name', 'colin27_t1_tal_hires.nii', 'pn', 3, 'resolution', 0.5, 'vessel', 1, ...
-%                 'WMH', 0, 'T2', 0, 'atrophy', {'hammers', [28 29], [1.5 3]}, 'rng', 0);
-%   rf = struct('percent', 20, 'type', 'A');
-%   mri_simulate(simu, rf);
+%   Example 1 - Basic simulation with added vessels and specific noise:
+%       simu = struct('name', 'colin27_t1_tal_hires.nii', 'pn', 3,
+%                     'resolution', 0.5, 'vessel', true, 'WMH', false,
+%                     'T2', false, 'atrophy', {}, 'rng', 42);
+%       rf = struct('percent', 20, 'type', 'A');
+%       mri_simulate(simu, rf);
+%
+%   Example 2 - Advanced simulation with atrophy and custom RF field:
+%       simu = struct('name', 'custom_t1.nii', 'pn', 2,
+%                     'resolution', [0.5, 0.5, 0.5], 'vessel', false,
+%                     'WMH', true, 'T2', false, 'atrophy', {'hammers',
+%                     [28, 29], [2, 3]}, 'rng', []);
+%       rf = struct('percent', 15, 'type', [3, 42]);
+%       mri_simulate(simu, rf);
+%
 %
 % TODO: simulation of motion artefacts using FFT and shift of phase information
 
@@ -234,7 +262,7 @@ if any(simu.thickness)
   [label, vol_seg] = simulate_thickness(label, simu, vol_seg, d, template_dir, idef_name, vx, order);
 end
 
-vol_simu = create_simulation(vol_seg, simu, name, res, mn, d, vessels, WMHs);
+[vol_simu, vol_corr] = create_simulation(vol_seg, simu, name, res, mn, d, vessels, WMHs);
 
 % use conversion map to obtain T2w image
 if simu.T2
@@ -245,7 +273,11 @@ end
 
 % apply predefined MNI bias field before resizing to defined output resolution
 if rf.percent ~= 0 && ischar(rf.type)
-  vol_simu = add_bias_field(vol_simu, rf, idef_name); % add predefined MNI field
+  if simu.save
+    [vol_simu, vol_corr] = add_bias_field(vol_simu, vol_corr, rf, idef_name); % add predefined MNI field
+  else
+    vol_simu = add_bias_field(vol_simu, [], rf, idef_name); % add predefined MNI field
+  end
 end
 
 mx_vol = max(vol_simu(:));
@@ -263,22 +295,32 @@ Vres.mat = spm_matrix(P);
 
 % output in defined resolution
 volres   = zeros(Vres.dim);
-labelres = zeros(Vres.dim);
-labelres_pve = zeros(Vres.dim);
+if simu.save
+  volres_corr = zeros(Vres.dim);
+  labelres = zeros(Vres.dim);
+  labelres_pve = zeros(Vres.dim);
+end
+
 for sl = 1:Vres.dim(3)
   M = spm_matrix([0 0 sl 0 0 0 1 1 1]);
   M1 = Vres.mat\V.mat\M;
   
   % use sinc interpolation for simulated image
   volres(:,:,sl) = spm_slice_vol(vol_simu,M1,Vres.dim(1:2),-5);
-  % and linear interpolation for label image
-  labelres(:,:,sl) = round(spm_slice_vol(label,M1,Vres.dim(1:2),1));
-  labelres_pve(:,:,sl) = spm_slice_vol(label_pve,M1,Vres.dim(1:2),1);
+  if simu.save
+    % and linear interpolation for label image
+    labelres(:,:,sl) = round(spm_slice_vol(label,M1,Vres.dim(1:2),1));
+    labelres_pve(:,:,sl) = spm_slice_vol(label_pve,M1,Vres.dim(1:2),1);
+    volres_corr(:,:,sl) = spm_slice_vol(vol_corr,M1,Vres.dim(1:2),-5);
+  end
 end
 
 % apply simulated bias field to output in defined resolution
 if rf.percent ~= 0 && isnumeric(rf.type)
   [volres, rf_field] = add_simulated_bias_field(volres, rf);
+  if simu.save
+    volres_corr = volres_corr.*rf_field;
+  end
 end
 
 volres = volres / mx_vol;
@@ -331,8 +373,8 @@ end
 simu_name = fullfile(pth, sprintf('pn%g_%gmm_%s%s.nii',simu.pn, mean(simu.resolution), name, str));
 fprintf('Save simulated image %s\n', simu_name);
 Vres.fname = simu_name;
-Vres.pinfo = [1/max(volres(:)) 0 352]';
-Vres.dt    = [4 0];
+Vres.pinfo = [1 0 352]';
+Vres.dt    = [16 0];
 spm_write_vol(Vres, volres);
 
 % write ground truth label
@@ -356,6 +398,14 @@ if simu.save
   Vres.pinfo = [1/3 0 352]';
   Vres.dt    = [2 0];
   spm_write_vol(Vres, labelres_pve);
+
+  % save bias corrected original image
+  vol_corr_name = fullfile(pth, sprintf('%gmm_%s%s.nii',mean(simu.resolution), name, str));
+  fprintf('Save %s\n', vol_corr_name);
+  Vres.fname = vol_corr_name;
+  Vres.pinfo = [1 0 352]';
+  Vres.dt    = [16 0];
+  spm_write_vol(Vres, volres_corr);
 end
 
 % save simulated bias field if defined
@@ -412,7 +462,7 @@ return
 %==========================================================================
 % function [label, vol_seg] = simulate_thickness(label, simu, vol_seg, d, template_dir, idef_name, vx, order)
 %==========================================================================
-function [label, vol_seg] = simulate_thickness(label, simu, vol_seg, d, template_dir, idef_name, vx, order);
+function [label, vol_seg] = simulate_thickness(label, simu, vol_seg, d, template_dir, idef_name, vx, order)
 
 csf_val = 1; gm_val = 2; wm_val = 3;
 
@@ -542,9 +592,9 @@ for i = 1:numel(simu.atrophy{2})
 end
 
 %==========================================================================
-% function vol_simu = create_simulation(vol_seg, simu, name, res, mn, d, vessels, WMHs)
+% function [vol_simu, vol_corr] = create_simulation(vol_seg, simu, name, res, mn, d, vessels, WMHs)
 %==========================================================================
-function vol_simu = create_simulation(vol_seg, simu, name, res, mn, d, vessels, WMHs)
+function [vol_simu, vol_corr] = create_simulation(vol_seg, simu, name, res, mn, d, vessels, WMHs)
 % go through all peaks that are defined
 % mainly copied from spm_preproc_write8.m
 
@@ -563,6 +613,7 @@ chan.T  = res.Tbias{1};
 
 % output image
 vol_simu = zeros(d, 'single');
+vol_corr = zeros(d, 'single');
 
 spm_progress_bar('init',length(x3),['Working on ' name],'Planes completed');
 for z = 1:length(x3)
@@ -572,6 +623,8 @@ for z = 1:length(x3)
   bf = exp(transf(chan.B1,chan.B2,chan.B3(z,:),chan.T));
   cr{1} = bf.*f;
 
+  vol_corr(:,:,z) = cr{1};
+  
   msk = any((f==0) | ~isfinite(f),3);
 
   % Parametric representation of intensity distributions
@@ -635,12 +688,12 @@ spm_jobman('run',matlabbatch);
 clear matlabbatch
 
 %==========================================================================
-% function vol_simu = add_bias_field(vol_simu, rf, idef_name)
+% function [vol_simu, vol_corr] = add_bias_field(vol_simu, vol_corr, rf, idef_name)
 %==========================================================================
-function vol_simu = add_bias_field(vol_simu, rf, idef_name)
-% warp defined rf field to native space
+function [vol_simu, vol_corr] = add_bias_field(vol_simu, vol_corr, rf, idef_name)
 
 fprintf('Transform RF field to native space.\n');
+% warp defined rf field to native space
 rf_name = ['rf100_' rf.type '.nii'];
 rf_field = cat_vol_defs(struct('field1',{{idef_name}},'images',{{rf_name}},'interp',1,'modulate',0));
 rf_field = single(rf_field{1}{1});
@@ -656,6 +709,9 @@ end
 ind = isfinite(rf_field);
 rf_field = 1 + rf_field - mean(rf_field(ind));
 vol_simu(ind) = rf_field(ind).*vol_simu(ind);
+if ~isempty(vol_corr)
+  vol_corr(ind) = rf_field(ind).*vol_corr(ind);
+end
 
 %==========================================================================
 % function [vol_simu, rf_field] = add_simulated_bias_field(vol_simu, rf)
