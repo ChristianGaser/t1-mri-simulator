@@ -82,8 +82,8 @@ function mri_simulate(simu, rf)
 %   Example 1 - Basic simulation with added vessels and specific noise:
 %       simu = struct('name', 'colin27_t1_tal_hires.nii', 'pn', 3,
 %                     'resolution', 0.5, 'vessel', true, 'WMH', false,
-%                     'T2', false, 'atrophy', {}, 'rng', 42);
-%       rf = struct('percent', 20, 'type', 'A');
+%                     'T2', false, 'atrophy', [], 'rng', 42);
+%       rf = struct('percent', 20, 'type', 'A','save',0);
 %       mri_simulate(simu, rf);
 %
 %   Example 2 - Advanced simulation with atrophy and custom RF field:
@@ -209,6 +209,8 @@ end
 
 % load seg8.mat file and define some parameters
 res = load(mat_name);
+[~, bname, ext] = spm_fileparts(res.image(1).fname);
+res.image(1).fname = [bname ext];
 V   = res.image(1);
 K   = numel(res.mg);
 d   = V.dim(1:3);
