@@ -55,7 +55,11 @@ mri_simulate(simu, rf);
 
 ## Examples
 simu = struct('name', 'colin27_t1_tal_hires.nii', 'pn', 3, 'resolution', 0.5, 'vessel', 1, 'WMH', 0, 'T2', 0, 'atrophy', {'hammers', [28 29], [1.5 3]}, 'rng', 0);
-
 rf = struct('percent', 20, 'type', 'A');
+mri_simulate(simu, rf);
 
+
+### Thickness Phantom with custom RF field
+simu = struct('name', 'colin27_t1_tal_hires.nii', 'pn', 3, 'resolution', 0.5, 'vessel', 0, 'WMH', 0, 'T2', 0, 'atrophy', [], 'rng', 0,'thickness', 2);
+rf = struct('percent', 15, 'type', [3, 42]);
 mri_simulate(simu, rf);
