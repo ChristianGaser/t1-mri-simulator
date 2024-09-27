@@ -80,20 +80,28 @@ function mri_simulate(simu, rf)
 %
 % Examples:
 %   Example 1 - Basic simulation with added vessels and specific noise:
-%       simu = struct('name', 'colin27_t1_tal_hires.nii', 'pn', 3,
-%                     'resolution', 0.5, 'vessel', true, 'WMH', false,
+%       simu = struct('name', 'colin27_t1_tal_hires.nii', 'pn', 3,...
+%                     'resolution', 0.5, 'vessel', true, 'WMH', false,...
 %                     'T2', false, 'atrophy', [], 'rng', 42);
 %       rf = struct('percent', 20, 'type', 'A','save',0);
 %       mri_simulate(simu, rf);
 %
-%   Example 2 - Advanced simulation with atrophy and custom RF field:
-%       simu = struct('name', 'custom_t1.nii', 'pn', 2,
-%                     'resolution', [0.5, 0.5, 0.5], 'vessel', false,
-%                     'WMH', true, 'T2', false, 'atrophy', {'hammers',
+%   Example 2 - Advanced simulation with atrophy and custom RF field and 
+%               large slice thickness:
+%       simu = struct('name', 'custom_t1.nii', 'pn', 2,...
+%                     'resolution', [0.5, 0.5, 1.5], 'vessel', false,...
+%                     'WMH', true, 'T2', false, 'atrophy', {'hammers',...
 %                     [28, 29], [2, 3]}, 'rng', []);
 %       rf = struct('percent', 15, 'type', [3, 42]);
 %       mri_simulate(simu, rf);
 %
+%   Example 3 - Thickness simulation:
+%       simu = struct('name', 'colin27_t1_tal_hires.nii', 'pn', 3,...
+%                     'resolution', 0.5, 'vessel', false,...
+%                     'WMH', false, 'T2', false, 'atrophy', [], 'rng', [],...
+%                     'thickness', [1.5 2.0 2.5]);
+%       rf = struct('percent', 20, 'type', 'A');
+%       mri_simulate(simu, rf);
 %
 % TODO: simulation of motion artefacts using FFT and shift of phase information
 
@@ -104,8 +112,8 @@ def.resolution = 1;
 def.vessel     = 0;
 def.WMH        = 0;
 def.T2         = 0;
-def.atrophy    = {'hammers', [28 29], [0 0]};
-def.thickness  = [0];
+def.atrophy    = [];
+def.thickness  = 0;
 def.rng        = 0;
 def.save       = 1;
 
@@ -115,12 +123,16 @@ else, simu = cat_io_checkinopt(simu, def); end
 % Default bias field parameters
 def.percent    = 20;
 def.type       = [2 0];
-def.save       = 1;
+def.save       = 0;
 
 if nargin < 2, rf = def;
 else, rf = cat_io_checkinopt(rf, def); end
 
 [pth, name, ext] = spm_fileparts(simu.name);
+if isempty(pth)
+  pth = fileparts(which(mfilename));
+  simu.name = fullfile(pth,simu.name);
+end
 
 % name of seg8.mat file that contains SPM12 segmentation parameters
 mat_name = fullfile(pth, [name '_seg8.mat']);
@@ -210,7 +222,7 @@ end
 % load seg8.mat file and define some parameters
 res = load(mat_name);
 [~, bname, ext] = spm_fileparts(res.image(1).fname);
-res.image(1).fname = [bname ext];
+res.image(1) = spm_vol(fullfile(pth,[bname ext]));
 V   = res.image(1);
 K   = numel(res.mg);
 d   = V.dim(1:3);
@@ -276,9 +288,9 @@ end
 % apply predefined MNI bias field before resizing to defined output resolution
 if rf.percent ~= 0 && ischar(rf.type)
   if simu.save
-    [vol_simu, vol_corr] = add_bias_field(vol_simu, vol_corr, rf, idef_name); % add predefined MNI field
+    [vol_simu, vol_corr] = add_bias_field(vol_simu, vol_corr, rf, idef_name, pth); % add predefined MNI field
   else
-    vol_simu = add_bias_field(vol_simu, [], rf, idef_name); % add predefined MNI field
+    vol_simu = add_bias_field(vol_simu, [], rf, idef_name, pth); % add predefined MNI field
   end
 end
 
@@ -690,13 +702,13 @@ spm_jobman('run',matlabbatch);
 clear matlabbatch
 
 %==========================================================================
-% function [vol_simu, vol_corr] = add_bias_field(vol_simu, vol_corr, rf, idef_name)
+% function [vol_simu, vol_corr] = add_bias_field(vol_simu, vol_corr, rf, idef_name, pth)
 %==========================================================================
-function [vol_simu, vol_corr] = add_bias_field(vol_simu, vol_corr, rf, idef_name)
+function [vol_simu, vol_corr] = add_bias_field(vol_simu, vol_corr, rf, idef_name, pth)
 
 fprintf('Transform RF field to native space.\n');
 % warp defined rf field to native space
-rf_name = ['rf100_' rf.type '.nii'];
+rf_name = fullfile(pth,['rf100_' rf.type '.nii']);
 rf_field = cat_vol_defs(struct('field1',{{idef_name}},'images',{{rf_name}},'interp',1,'modulate',0));
 rf_field = single(rf_field{1}{1});
 
