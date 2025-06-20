@@ -129,10 +129,7 @@ if nargin < 2, rf = def;
 else, rf = cat_io_checkinopt(rf, def); end
 
 [pth, name, ext] = spm_fileparts(simu.name);
-if isempty(pth)
-  pth = fileparts(which(mfilename));
-  simu.name = fullfile(pth,simu.name);
-end
+pth_root = fileparts(which(mfilename));
 
 % name of seg8.mat file that contains SPM12 segmentation parameters
 mat_name = fullfile(pth, [name '_seg8.mat']);
@@ -288,9 +285,9 @@ end
 % apply predefined MNI bias field before resizing to defined output resolution
 if rf.percent ~= 0 && ischar(rf.type)
   if simu.save
-    [vol_simu, vol_corr] = add_bias_field(vol_simu, vol_corr, rf, idef_name, pth); % add predefined MNI field
+    [vol_simu, vol_corr] = add_bias_field(vol_simu, vol_corr, rf, idef_name, pth_root); % add predefined MNI field
   else
-    vol_simu = add_bias_field(vol_simu, [], rf, idef_name, pth); % add predefined MNI field
+    vol_simu = add_bias_field(vol_simu, [], rf, idef_name, pth_root); % add predefined MNI field
   end
 end
 
