@@ -90,8 +90,8 @@ function mri_simulate(simu, rf)
 %               large slice thickness:
 %       simu = struct('name', 'custom_t1.nii', 'pn', 2,...
 %                     'resolution', [0.5, 0.5, 1.5], 'vessel', false,...
-%                     'WMH', true, 'T2', false, 'atrophy', {'hammers',...
-%                     [28, 29], [2, 3]}, 'rng', []);
+%                     'WMH', true, 'T2', false, 'rng', []);
+%       simu.atrophy = {'hammers',[28, 29], [2, 3]};
 %       rf = struct('percent', 15, 'type', [3, 42]);
 %       mri_simulate(simu, rf);
 %
