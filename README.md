@@ -40,8 +40,8 @@ save | If type is a numeric array the simulated bias field can be optionally sav
 ## Defaults
 If 'simu' or 'rf' are not provided, they are set to default values:
 
- simu = {'name','colin27_t1_tal_hires.nii','pn': 1, 'resolution': 1, 'vessel': 0, 'WMH': 0, 'T2': 0, 'atrophy': {'hammers', [28 29], [1.5 3]}, 'rng', 0}
- rf = {'percent': 20, 'type': [2 0]}
+ simu = struct('name','colin27_t1_tal_hires.nii','pn', 1, 'resolution', 1, 'vessel', 0, 'WMH', 0, 'T2', 0, 'atrophy', [], 'rng', 0, 'save', 1);
+ rf = struct('percent', 20, 'type', [2 0]);
 
 ## Output
 The function saves the following images:
@@ -54,12 +54,31 @@ The function saves the following images:
 mri_simulate(simu, rf);
 
 ## Examples
-simu = struct('name', 'colin27_t1_tal_hires.nii', 'pn', 3, 'resolution', 0.5, 'vessel', 1, 'WMH', 0, 'T2', 0, 'atrophy', {'hammers', [28 29], [1.5 3]}, 'rng', 0);
-rf = struct('percent', 20, 'type', 'A');
+
+### Basic simulation with added vessels and specific noise
+```
+simu = struct('name', 'colin27_t1_tal_hires.nii', 'pn', 3,...
+              'resolution', 0.5, 'vessel', true, 'WMH', false,...
+              'T2', false, 'atrophy', [], 'rng', 42);
+rf = struct('percent', 20, 'type', 'A','save',0);
 mri_simulate(simu, rf);
-
-
-### Thickness Phantom with custom RF field
-simu = struct('name', 'colin27_t1_tal_hires.nii', 'pn', 3, 'resolution', 0.5, 'vessel', 0, 'WMH', 0, 'T2', 0, 'atrophy', [], 'rng', 0,'thickness', 2);
+```
+### Advanced simulation with atrophy and custom RF field and large slice thickness
+```
+simu = struct('name', 'custom_t1.nii', 'pn', 2,...
+              'resolution', [0.5, 0.5, 1.5], 'vessel', false,...
+              'WMH', true, 'T2', false, 'rng', []);
+simu.atrophy = {'hammers',[28, 29], [2, 3]};
 rf = struct('percent', 15, 'type', [3, 42]);
 mri_simulate(simu, rf);
+```
+
+### Thickness simulation
+```
+simu = struct('name', 'colin27_t1_tal_hires.nii', 'pn', 3,...
+              'resolution', 0.5, 'vessel', false,...
+              'WMH', false, 'T2', false, 'atrophy', [], 'rng', [],...
+              'thickness', [1.5 2.0 2.5]);
+rf = struct('percent', 20, 'type', 'A');
+mri_simulate(simu, rf);
+```
