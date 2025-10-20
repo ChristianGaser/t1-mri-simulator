@@ -3,17 +3,11 @@ function mri_simulate(simu, rf)
 %
 % Overview:
 %   `mri_simulate` generates simulated MRI images, allowing for T1-weighted
-%   (T1w) or T2-weighted (T2w) imaging simulations. It employs a high-resolution
+%   (T1w) imaging simulations. It employs a high-resolution
 %   (e.g., 0.5mm) T1w image, typically Colin27, as a base. Users can introduce
-%   various artifacts and features like vessels, white matter hyperintensities
-%   (WMHs), Gaussian noise, and RF B1 inhomogeneities. It supports simulations
-%   of atrophy or cortical thickness modifications. Preprocessing with SPM12 and
-%   CAT12 segmentation is required for custom images.
-%   If you intend to use any other image for simulation you have to run these 
-%   steps first:
-%     - call SPM12 segmentation
-%     - call CAT12 segmentation in expert mode: save GM, WM, and CSF in native 
-%       space and deformation field Image->Template (forward)
+%   various artifacts and features like Gaussian noise, and RF B1 inhomogeneities. 
+%   It supports simulations of atrophy or cortical thickness modifications. 
+%   Preprocessing with SPM12 segmentation is required for custom images.
 %
 % Syntax:
 %   mri_simulate(simu, rf)
@@ -25,19 +19,14 @@ function mri_simulate(simu, rf)
 %       - 'rng' (double or []): Seed for the random number generator; use []
 %         for MATLAB's default behavior.
 %       - 'resolution' (double or [x, y, z]): Spatial resolution of the
-%         simulated image.
-%       - 'vessel' (logical): Flag to add vessels to the T1 image. Only
-%         applicable for Colin27.
-%       - 'WMH' (logical): Flag to add white matter hyperintensities.
-%       - 'T2' (logical): Flag for simulating a T2-weighted image. Only works
-%         with Colin27.
+%         simulated image. Use 'NaN' for keeping original image resolution
 %       - 'atrophy' (cell): Specifies regions of interest (ROIs) for simulating
 %         atrophy, including atlas name, ROI IDs, and atrophy values. Multiple ROIs 
 %         and the respective atrophy values can be defined. An atrophy value of 
 %         1.5 leads to a GM reduction of about 5%, while a value of 2 corresponds 
 %         to around 10% and 3 to around 15%. Please note, that this option takes 
 %         a lot of time because the atlas labels have to be interpolated using 
-%         categorical interpolation (i.e. each label seperately). Either thickness 
+%         categorical interpolation (i.e. each label separetely). Either thickness 
 %         or atrophy can be simulated.
 %       - 'thickness' (double or [double double double]): Specifies the cortical 
 %         thickness for simulation. The WM label of the image is used to add a 
@@ -79,26 +68,26 @@ function mri_simulate(simu, rf)
 %       mri_simulate(simu, rf);
 %
 % Examples:
-%   Example 1 - Basic simulation with added vessels and specific noise:
+%   Example 1 - Basic simulation with specific noise:
 %       simu = struct('name', 'colin27_t1_tal_hires.nii', 'pn', 3,...
-%                     'resolution', 0.5, 'vessel', true, 'WMH', false,...
-%                     'T2', false, 'atrophy', [], 'rng', 42);
+%                     'resolution', 0.5,...
+%                     'atrophy', [], 'rng', 42);
 %       rf = struct('percent', 20, 'type', 'A','save',0);
 %       mri_simulate(simu, rf);
 %
 %   Example 2 - Advanced simulation with atrophy and custom RF field and 
 %               large slice thickness:
 %       simu = struct('name', 'custom_t1.nii', 'pn', 2,...
-%                     'resolution', [0.5, 0.5, 1.5], 'vessel', false,...
-%                     'WMH', true, 'T2', false, 'rng', []);
+%                     'resolution', [0.5, 0.5, 1.5],...
+%                     'rng', []);
 %       simu.atrophy = {'hammers',[28, 29], [2, 3]};
 %       rf = struct('percent', 15, 'type', [3, 42]);
 %       mri_simulate(simu, rf);
 %
 %   Example 3 - Thickness simulation:
 %       simu = struct('name', 'colin27_t1_tal_hires.nii', 'pn', 3,...
-%                     'resolution', 0.5, 'vessel', false,...
-%                     'WMH', false, 'T2', false, 'atrophy', [], 'rng', [],...
+%                     'resolution', NaN,...
+%                     'atrophy', [], 'rng', [],...
 %                     'thickness', [1.5 2.0 2.5]);
 %       rf = struct('percent', 20, 'type', 'A');
 %       mri_simulate(simu, rf);
@@ -108,10 +97,7 @@ function mri_simulate(simu, rf)
 % Default simulation parameters
 def.name       = 'colin27_t1_tal_hires.nii';
 def.pn         = 3;
-def.resolution = 1;
-def.vessel     = 0;
-def.WMH        = 0;
-def.T2         = 0;
+def.resolution = NaN;
 def.atrophy    = [];
 def.thickness  = 0;
 def.rng        = 0;
@@ -137,37 +123,18 @@ mat_name = fullfile(pth, [name '_seg8.mat']);
 % CAT12 template dir is later used for defining atrophy atlas
 template_dir = fullfile(spm('dir'),'toolbox','cat12','templates_MNI152NLin2009cAsym');
 
-% call SPM12 segmentation if necessary
+% call SPM segmentation if necessary
 if ~exist(mat_name,'file')
-  fprintf('We have to run SPM12 segmentation first.\n')
+  fprintf('We have to run SPM segmentation first.\n')
 
   matlabbatch{1}.spm.spatial.preproc.channel.vols = {simu.name};
   spm_jobman('run',matlabbatch);
   clear matlabbatch
 end
 
-% only for colin27_t1_tal_hires the vessel and T2 transformation maps are available
-if (simu.vessel || simu.T2) && ~strcmp(simu.name, 'colin27_t1_tal_hires.nii')
-  fprintf('Disabled option to add vessels or to simulate T2 images because this can only be used for ''colin27_t1_tal_hires.nii''.\n');
-  simu.vessel = 0;
-  simu.T2 = 0;
-end
-
 % check that only one of these options is used
-if simu.WMH && (simu.vessel || simu.T2)
-  fprintf('Option to add WMHs cannot be combined with option to add vessels or to simulate T2 images.\n');
-  return
-end
-
-% check that only one of these options is used
-if ((isfield(simu,'atrophy') && ~isempty(simu.atrophy) && any(simu.atrophy{3} > 1)) || simu.T2) && any(simu.thickness)
-  fprintf('Option to simulate atrophy or T2 cannot be combined with option to simulate thickness images.\n');
-  return
-end
-
-% check that only one of these options is used
-if simu.vessel && simu.T2
-  fprintf('Option to add vessels cannot be combined with option to simulate T2 images.\n');
+if ((isfield(simu,'atrophy') && ~isempty(simu.atrophy) && any(simu.atrophy{3} > 1))) && any(simu.thickness)
+  fprintf('Option to simulate atrophy cannot be combined with option to simulate thickness images.\n');
   return
 end
 
@@ -197,53 +164,66 @@ else
   simu_atrophy = 0;
 end
 
-% check for external segmentations and deformation
-% and call CAT12 segmentation if necessary
-if ~exist(fullfile(pth,'mri',['p1' name ext]),'file') || ...
-   ~exist(fullfile(pth,'mri',['p2' name ext]),'file') || ...
-   ~exist(fullfile(pth,'mri',['p3' name ext]),'file') || ...
-   ~exist(fullfile(pth,'mri',['y_' name ext]),'file')
-  call_cat12(simu);
-end
-
-% load external segmentations
-Vseg = spm_vol(char(fullfile(pth,'mri',['p1' name ext]),fullfile(pth,'mri',['p2' name ext]),fullfile(pth,'mri',['p3' name ext])));
-vol_seg = single(spm_read_vols(Vseg));
-
-% check whether we need the inverse deformation field for warping these maps
-% to native space
-if simu.WMH || simu_atrophy || (rf.percent ~= 0 && ischar(rf.type)) || any(simu.thickness)
-  idef_name = invert_deformations(simu);
-end
-
 % load seg8.mat file and define some parameters
 res = load(mat_name);
 [~, bname, ext] = spm_fileparts(res.image(1).fname);
 res.image(1) = spm_vol(fullfile(pth,[bname ext]));
-V   = res.image(1);
-K   = numel(res.mg);
+V = res.image(1);
 d   = V.dim(1:3);
 vx = sqrt(sum(V.mat(1:3,1:3).^2));
 
+% obtain SPM segmentations
+[Ysrc, Ycls, Ydef] = cat_spm_preproc_write8(res,zeros(max(res.lkp),4),zeros(1,2),[0 0],0,2);
+
+% write forward deformation field
+idef_name = fullfile(pth, ['y_inv_' name ext]);
+
+if ~exist(idef_name)
+  def_name = fullfile(pth, ['y_' name ext]);
+  Ndef = nifti;
+  Ndef.dat  = file_array(def_name,[d,1,3],...
+                                 [spm_type('float32') spm_platform('bigend')],...
+                                 0,1,0);
+  Ndef.mat = V.mat;
+  Ndef.mat0 = V.mat;
+  create(Ndef);
+  Ndef.dat(:,:,:,1,1) = Ydef(:,:,:,1);
+  Ndef.dat(:,:,:,1,2) = Ydef(:,:,:,2);
+  Ndef.dat(:,:,:,1,3) = Ydef(:,:,:,3);
+  
+  % write inverse deformation field
+  idef_name = invert_deformations(simu);
+  spm_unlink(def_name);
+  clear Ydef
+end
+
+% LAS correction and SANLM denoising
+Ycorr = cat_main_LASsimple(Ysrc,Ycls);
+cat_sanlm(Ycorr,3,1);
+
+% Replace GM/WM/CSF segmentation by labels using LAS corrected image
+Yp0toC = @(Yp0,c) 1-min(1,abs(Yp0-c));
+Yseg = zeros([d, 3]);
+brainmask = zeros(d);
+seg_order = [2 3 1];
+for i = 1:3
+  brainmask = brainmask + double(Ycls{i})/255;
+end
+for i = 1:3
+    Yseg(:,:,:,i) = Yp0toC(3*Ycorr, seg_order(i)).*brainmask; 
+end
+clear Ycls
+
 % add atrophy to GM by decreasing GM value in ROI and increasing CSF value
 if simu_atrophy
-  vol_seg = simulate_atrophy(simu, vol_seg, d, template_dir, idef_name);
+  Yseg = simulate_atrophy(simu, Yseg, d, template_dir, idef_name);
 end
 
-% get ground truth label using GM/WM/CSF from CAT12 segmentation
-label = zeros(d, 'single');
+% get ground truth label using GM/WM/CSF
 label_pve = zeros(d, 'single');
 order = [3 1 2];
-[maxi, maxind] = max(vol_seg(:,:,:,order),[],4);
-mind = sum(vol_seg(:,:,:,1:3),4) > 0.15;
 for k = 1:3
-    label = label + (maxind == k).*(maxi~=0 & mind)*k;
-    label_pve = label_pve + k*(vol_seg(:,:,:,order(k)));
-end
-
-% extend target voxel size if needed
-if numel(simu.resolution) == 1
-  simu.resolution = simu.resolution * ones(1,3);
+    label_pve = label_pve + k*(Yseg(:,:,:,order(k)));
 end
 
 % get means for GM/WM/CSF
@@ -251,51 +231,41 @@ mn = zeros(3,1);
 for k=1:3
   ind = find(res.lkp==k);
   for j=1:numel(ind)
-    mn(k) = mn(k) + res.mg(ind(j))*res.mn(ind(j));
+    mn(k) = mn(k) + res.mg(ind(j))*res.mn(1,ind(j));
   end
 end
 
-% load WMH map
-if simu.WMH
-  [WMHs, res, K] = simulate_WMHs(res, K, template_dir, idef_name);
+% extend target voxel size if needed
+if numel(simu.resolution) == 1
+  if isnan(simu.resolution)
+    simu.resolution = vx;
+  else
+    simu.resolution = simu.resolution * ones(1,3);
+  end
 else
-  WMHs = [];
-end
-
-% load vessel map (only works for Colin27)
-if simu.vessel
-  [vessels, res, K] = simulate_vessels(res, K);
-else
-  vessels = [];
+  if isnan(simu.resolution(1))
+    simu.resolution = vx;
+  end
 end
 
 if any(simu.thickness)
-  [label, vol_seg] = simulate_thickness(label, simu, vol_seg, d, template_dir, idef_name, vx, order);
+  [label_pve, Yseg] = simulate_thickness(label_pve, simu, Yseg, d, template_dir, idef_name, vx, order);
 end
 
-[vol_simu, vol_corr] = create_simulation(vol_seg, simu, name, res, mn, d, vessels, WMHs);
+Ysimu = synthesize_from_segmentation(Yseg, simu, name, res, mn, d);
 
-% use conversion map to obtain T2w image
-if simu.T2
-  t1_to_t2 = single(spm_read_vols(spm_vol('colin27_t1_to_t2_tal_hires.nii')));
-  vol_simu = vol_simu.*t1_to_t2;
-  clear t1_to_t2
-end
-
-% apply predefined MNI bias field before resizing to defined output resolution
-if rf.percent ~= 0 && ischar(rf.type)
-  if simu.save
-    [vol_simu, vol_corr] = add_bias_field(vol_simu, vol_corr, rf, idef_name, pth_root); % add predefined MNI field
+% apply either predefined MNI bias field or simulated bias filed before resizing
+% to defined output resolution
+if rf.percent ~= 0
+  if ischar(rf.type)
+    [Ysimu, rf_field] = add_bias_field(Ysimu, rf, idef_name, pth_root); % add predefined MNI field
   else
-    vol_simu = add_bias_field(vol_simu, [], rf, idef_name, pth_root); % add predefined MNI field
+    [Ysimu, rf_field] = add_simulated_bias_field(Ysimu, rf);
   end
 end
 
-mx_vol = max(vol_simu(:));
+mx_vol = max(Ysimu(:));
 relWM_peak = mn(2)/mx_vol;
-
-% add partial volume effect and prepare for downsampling by gaussian smoothing
-spm_smooth(vol_simu, vol_simu, 1.5*simu.resolution);
 
 % output matrix
 Vres.dim = round(V.dim.*vx./simu.resolution);
@@ -307,8 +277,6 @@ Vres.mat = spm_matrix(P);
 % output in defined resolution
 volres   = zeros(Vres.dim);
 if simu.save
-  volres_corr = zeros(Vres.dim);
-  labelres = zeros(Vres.dim);
   labelres_pve = zeros(Vres.dim);
 end
 
@@ -317,20 +285,10 @@ for sl = 1:Vres.dim(3)
   M1 = Vres.mat\V.mat\M;
   
   % use sinc interpolation for simulated image
-  volres(:,:,sl) = spm_slice_vol(vol_simu,M1,Vres.dim(1:2),-5);
+  volres(:,:,sl) = spm_slice_vol(Ysimu,M1,Vres.dim(1:2),-5);
   if simu.save
     % and linear interpolation for label image
-    labelres(:,:,sl) = round(spm_slice_vol(label,M1,Vres.dim(1:2),1));
     labelres_pve(:,:,sl) = spm_slice_vol(label_pve,M1,Vres.dim(1:2),1);
-    volres_corr(:,:,sl) = spm_slice_vol(vol_corr,M1,Vres.dim(1:2),-5);
-  end
-end
-
-% apply simulated bias field to output in defined resolution
-if rf.percent ~= 0 && isnumeric(rf.type)
-  [volres, rf_field] = add_simulated_bias_field(volres, rf);
-  if simu.save
-    volres_corr = volres_corr.*rf_field;
   end
 end
 
@@ -349,9 +307,6 @@ volres = volres + noise;
 volres = mx_vol * max(min(volres, 1), 0);
 
 str = '';
-if simu.T2
-  str = [str '_T2'];
-end
 if (exist('rf','var') && rf.percent ~= 0)
   if isnumeric(rf.type)
     str = sprintf('_rf%g_%d_%d', rf.percent, rf.type(1), rf.type(2));
@@ -359,12 +314,7 @@ if (exist('rf','var') && rf.percent ~= 0)
     str = sprintf('_rf%g_%s', rf.percent, rf.type);
   end
 end
-if simu.vessel
-  str = [str '_vessels'];
-end
-if simu.WMH
-  str = [str '_WMHs'];
-end
+
 if simu_atrophy
   if numel(simu.atrophy{2}) > 1
     str = sprintf('%s_%s_multi',str,simu.atrophy{1});
@@ -380,48 +330,42 @@ if any(simu.thickness)
   end
 end
 
+mean_resolution = round(10*mean(simu.resolution))/10;
+
 % write simulated image
-simu_name = fullfile(pth, sprintf('pn%g_%gmm_%s%s.nii',simu.pn, mean(simu.resolution), name, str));
+mind = sum(Yseg(:,:,:,1:3),4) > 0.15;
+simu_name = fullfile(pth, sprintf('pn%g_%gmm_%s%s.nii',simu.pn, mean_resolution, name, str));
 fprintf('Save simulated image %s\n', simu_name);
 Vres.fname = simu_name;
 Vres.pinfo = [1 0 352]';
 Vres.dt    = [16 0];
 spm_write_vol(Vres, volres);
 
+% write simulated masked image
+simu_name = fullfile(pth, sprintf('pn%g_%gmm_m%s%s.nii',simu.pn, mean_resolution, name, str));
+fprintf('Save simulated masked image %s\n', simu_name);
+Vres.fname = simu_name;
+spm_write_vol(Vres, volres.*mind);
+
 % write ground truth label
 if simu.save
   if any(simu.thickness)
-    label_name = fullfile(pth, sprintf('label_%gmm_%s%s.nii', mean(simu.resolution), name, str));
-    label_pve_name = fullfile(pth, sprintf('label_pve_%gmm_%s%s.nii', mean(simu.resolution), name, str));
+    label_pve_name = fullfile(pth, sprintf('label_pve_%gmm_%s%s.nii', mean_resolution, name, str));
   else
-    label_name = fullfile(pth, sprintf('label_%gmm_%s.nii', mean(simu.resolution), name));
-    label_pve_name = fullfile(pth, sprintf('label_pve_%gmm_%s.nii', mean(simu.resolution), name));
+    label_pve_name = fullfile(pth, sprintf('label_pve_%gmm_%s.nii', mean_resolution, name));
   end
   
-  fprintf('Save %s\n', label_name);
-  Vres.fname = label_name;
-  Vres.pinfo = [1/3 0 352]';
-  Vres.dt    = [2 0];
-  spm_write_vol(Vres, labelres);
-
   fprintf('Save %s\n', label_pve_name);
   Vres.fname = label_pve_name;
-  Vres.pinfo = [1/3 0 352]';
-  Vres.dt    = [2 0];
+  Vres.pinfo = [1/255/3 0 352]';
+  Vres.dt    = [4 0];
   spm_write_vol(Vres, labelres_pve);
 
-  % save bias corrected original image
-  vol_corr_name = fullfile(pth, sprintf('%gmm_%s%s.nii',mean(simu.resolution), name, str));
-  fprintf('Save %s\n', vol_corr_name);
-  Vres.fname = vol_corr_name;
-  Vres.pinfo = [1 0 352]';
-  Vres.dt    = [16 0];
-  spm_write_vol(Vres, volres_corr);
 end
 
 % save simulated bias field if defined
 if rf.save
-  rf_name = fullfile(pth, sprintf('%s_%gmm_%s.nii', str(2:end), mean(simu.resolution), name));
+  rf_name = fullfile(pth, sprintf('%s_%gmm_%s.nii', str(2:end), mean_resolution, name));
   fprintf('Save %s\n', rf_name);
   Vres.fname = rf_name;
   Vres.pinfo = [1/max(rf_field(:)) 0 352]';
@@ -443,6 +387,7 @@ else
   t = zeros(size(B1,1),size(B2,1),size(B3,1));
 end
 return
+
 
 %==========================================================================
 % function p = likelihoods(f,bf,mg,mn,vr)
@@ -471,13 +416,13 @@ return
 
 
 %==========================================================================
-% function [label, vol_seg] = simulate_thickness(label, simu, vol_seg, d, template_dir, idef_name, vx, order)
+% function [label, Yseg] = simulate_thickness(label, simu, Yseg, d, template_dir, idef_name, vx, order)
 %==========================================================================
-function [label, vol_seg] = simulate_thickness(label, simu, vol_seg, d, template_dir, idef_name, vx, order)
+function [label, Yseg] = simulate_thickness(label, simu, Yseg, d, template_dir, idef_name, vx, order)
 
-csf_val = 1; gm_val = 2; wm_val = 3;
+csf_val = 1; cgm_value = 1.5; gm_val = 2; wm_val = 3; gwm_val = 2.5;
 
-% warp atlas to native spave using categorical interpolation
+% warp atlas to native space using categorical interpolation
 fprintf('Transform atlas to native space. This may take a while...\n');
 hammers_name = fullfile(template_dir,'hammers.nii');
 hammers = cat_vol_defs(struct('field1',{{idef_name}},'images',{{hammers_name}},'interp',-1,'modulate',0));
@@ -494,81 +439,87 @@ mask_thickness{1} = (hammers > 63.5 & hammers < 67.5) | (hammers > 21.5 & hammer
 mask_thickness{3} = (hammers > 55.5 & hammers < 59.5) | (hammers > 27.5 & hammers < 29.5) | (hammers > 68.5 & hammers < 71.5); % frontal
 mask_thickness{2} = ~mask_thickness{1} & ~mask_thickness{3}; % remaining parts
 
+mask = round(label) > 0;
 label0 = label;
-
-mask = label > 0;
-
-% euclidean distance to wm
-wm  = label==wm_val;
-wm = cat_vol_morph(wm,'close',1);
-
-% euclidean distance to wm
-Dwm = (bwdist(wm) - 0.5) * mean(vx); % also consider voxelsize/2 correction of distance
 
 label1 = cell(numel(simu.thickness),1);
 
-for k=1:numel(simu.thickness)
+Yseg(:,:,:,1:3) = 0;
 
-  label1{k} = label;
+% vary range of PVE from -0.25..0.25 in 20 steps
+pve_range = linspace(-0.25,0.25,20);
+for pve_step = 1:numel(pve_range)
 
-  % set gm and csf to csf
-  label1{k}(label1{k}<wm_val & label1{k}>csf_val) = csf_val;
-
-  % set dilated gm to gm
-  label1{k}(label1{k} < wm_val & Dwm <= simu.thickness(k)) = gm_val;
-    
-  % check distance inside gm
-  D = (bwdist(label1{k}==csf_val) + bwdist(label1{k}==wm_val) - 1)*mean(vx);
-  D(label1{k}~=gm_val) = 0;
-      
-  % dilate gm where distance in gm is too large to make more space
-  gm1 = cat_vol_morph(D > 0.97*simu.thickness(k),'o',1);
-  gm1 = cat_vol_morph(gm1,'dd',2);
-  gm1(~mask) = 0;
-  label1{k}(gm1>0 | label1{k} == gm_val) = csf_val;
+  % euclidean distance to wm
+  wm  = round(label+pve_range(pve_step)) > gwm_val;
+  wm = cat_vol_morph(wm,'close',1);
   
   % euclidean distance to wm
-  wm  = label1{k}==wm_val;
-  Dwm = (bwdist(wm) - 0.5) * mean(vx);
-  
-  label1{k}(~wm) = csf_val;
-  label1{k}(~mask) = 0;
-  
-  % set dilated gm to gm
-  label1{k}(label1{k} == csf_val & Dwm <= simu.thickness(k)) = gm_val;
+  Dwm = (bwdist(wm) - 0.5) * mean(vx); % also consider voxelsize/2 correction of distance
 
-  label1{k}(mask_orig) = label0(mask_orig);
-end
-
-
-% replace tissue maps with modified label
-for j = 1:3
-  tmp_seg = vol_seg(:,:,:,order(j));
+  for k=1:numel(simu.thickness)
   
-  if numel(simu.thickness) == 1
-  % only simulate 2mm thickness
-    tmp_seg = single(label1{1} == (j));
-  else
-    for k = 1:3
-      tmp_seg(mask_thickness{k}) = single(label1{k}(mask_thickness{k}) == (j));
-    end
+    label1{k} = round(label+pve_range(pve_step));
+  
+    % set gm and csf to csf
+    label1{k}(label1{k} < wm_val & label1{k} > csf_val) = csf_val;
+  
+    % set dilated gm to gm
+    label1{k}(label1{k} < wm_val & Dwm <= simu.thickness(k)) = gm_val;
+      
+    % check distance inside gm
+    D = (bwdist(label1{k}==csf_val) + bwdist(label1{k}==wm_val) - 1)*mean(vx);
+    D(label1{k}~=gm_val) = 0;
+        
+    % dilate gm where distance in gm is too large to make more space
+    gm1 = cat_vol_morph(D > 0.97*simu.thickness(k),'o',1);
+    gm1 = cat_vol_morph(gm1,'dd',2);
+    gm1(~mask) = 0;
+    label1{k}(gm1 > 0 | label1{k} == gm_val) = csf_val;
+    
+    % euclidean distance to wm
+    wm  = label1{k}==wm_val;
+    Dwm = (bwdist(wm) - 0.5) * mean(vx);
+    
+    label1{k}(~wm) = csf_val;
+    label1{k}(~mask) = 0;
+    
+    % set dilated gm to gm
+    label1{k}(label1{k} == csf_val & Dwm <= simu.thickness(k)) = gm_val;
+  
+    % get original label for basal ganglia and cerebellum
+    label1{k}(mask_orig) = label0(mask_orig);
   end
-  vol_seg(:,:,:,order(j)) = tmp_seg;
+  
+  
+  % replace tissue maps with modified label
+  for j = 1:3
+  
+    if isscalar(simu.thickness)
+      % only simulate 2mm thickness
+      tmp_seg = single(round(label1{1}) == (j));
+    else
+      tmp_seg = Yseg(:,:,:,order(j));
+      for k = 1:3
+        tmp_seg(mask_thickness{k}) = single(round(label1{k}(mask_thickness{k})) == (j));
+      end
+    end
+    Yseg(:,:,:,order(j)) = Yseg(:,:,:,order(j)) + tmp_seg/numel(pve_range);
+  end
 end
 
 % update ground truth label
 label = zeros(d, 'single');
-[maxi, maxind] = max(vol_seg(:,:,:,order),[],4);
-mind = sum(vol_seg(:,:,:,1:3),4) > 0.15;
+
 for k = 1:3
-    label = label + (maxind == k).*(maxi~=0 & mind)*k;
+    label = label + k*Yseg(:,:,:,order(k));
 end
 
 
 %==========================================================================
-% function vol_seg = simulate_atrophy(simu, vol_seg, dims, template_dir, idef_name)
+% function Yseg = simulate_atrophy(simu, Yseg, dims, template_dir, idef_name)
 %==========================================================================
-function vol_seg = simulate_atrophy(simu, vol_seg, dims, template_dir, idef_name)
+function Yseg = simulate_atrophy(simu, Yseg, dims, template_dir, idef_name)
 
 % warp atlas to native spave using categorical interpolation
 fprintf('Transform atlas to native space. This may take a while...\n');
@@ -591,25 +542,26 @@ for i = 1:numel(simu.atrophy{2})
   mod_atlas(ind_atlas) = simu.atrophy{3}(i);
   mod_atlas(~ind_atlas) = 1.0;
   
-  [~, maxind] = max(vol_seg,[],4);
+  [~, maxind] = max(Yseg,[],4);
   GM_atlas = sum(maxind(ind_atlas) == 1);
 
   % increase CSF by factor defined in atrophy mask
-  vol_seg(:,:,:,3) = mod_atlas.*vol_seg(:,:,:,3);
+  Yseg(:,:,:,3) = mod_atlas.*Yseg(:,:,:,3);
   
-  [~, maxind] = max(vol_seg,[],4);
+  [~, maxind] = max(Yseg,[],4);
   GM_atlas_simu = sum(maxind(ind_atlas) == 1);
   fprintf('GM reduction in region #%d = %3.2f%s\n',simu.atrophy{2}(i),100*(1-GM_atlas_simu/GM_atlas),'%');
 end
 
+
 %==========================================================================
-% function [vol_simu, vol_corr] = create_simulation(vol_seg, simu, name, res, mn, d, vessels, WMHs)
+% function Ysimu = synthesize_from_segmentation(vol_seg, simu, name, res, mn, d)
 %==========================================================================
-function [vol_simu, vol_corr] = create_simulation(vol_seg, simu, name, res, mn, d, vessels, WMHs)
+function Ysimu = synthesize_from_segmentation(vol_seg, simu, name, res, mn, d)
 % go through all peaks that are defined
 % mainly copied from spm_preproc_write8.m
 
-K   = numel(res.mn);
+K   = size(res.mn,2);
 
 [x1,x2,o] = ndgrid(1:d(1),1:d(2),1);
 x3 = 1:d(3);
@@ -623,8 +575,7 @@ chan.B1 = spm_dctmtx(d(1),d3(1),x1(:,1));
 chan.T  = res.Tbias{1};
 
 % output image
-vol_simu = zeros(d, 'single');
-vol_corr = zeros(d, 'single');
+Ysimu = zeros(d, 'single');
 
 spm_progress_bar('init',length(x3),['Working on ' name],'Planes completed');
 for z = 1:length(x3)
@@ -634,8 +585,6 @@ for z = 1:length(x3)
   bf = exp(transf(chan.B1,chan.B2,chan.B3(z,:),chan.T));
   cr{1} = bf.*f;
 
-  vol_corr(:,:,z) = cr{1};
-  
   msk = any((f==0) | ~isfinite(f),3);
 
   % Parametric representation of intensity distributions
@@ -651,57 +600,25 @@ for z = 1:length(x3)
     end
   end
   
-  if simu.vessel
-    q1(:,:,K) = 5*vessels(:,:,z);
-  end
-
-  if simu.WMH
-    q1(:,:,K) = 5*WMHs(:,:,z);
-  end
-
   s   = sum(q1,3);
   tmp = zeros(d(1:2));
 
   % sum up over all classes and normalize to sum of 1
   for k=1:K
-      tmp = tmp + res.mn(1,k)*q1(:,:,k)./s;
+    tmp = tmp + res.mn(1,k)*q1(:,:,k)./s;
   end
   tmp(msk) = 1e-3;
-  vol_simu(:,:,z) = tmp;
+  Ysimu(:,:,z) = tmp;
   
   spm_progress_bar('set',z);
 end
 spm_progress_bar('clear');
 
-%==========================================================================
-% function call_cat12(simu)
-%==========================================================================
-function call_cat12(simu)
-
-fprintf('We have to run CAT12 first to save GM, WM, and CSF segmentations in native space and deformation field Image->Template (forward).\n')
-matlabbatch{1}.spm.tools.cat.estwrite.data = {simu.name};
-matlabbatch{1}.spm.tools.cat.estwrite.output.surface = 0;
-matlabbatch{1}.spm.tools.cat.estwrite.output.ROImenu.noROI = struct([]);
-matlabbatch{1}.spm.tools.cat.estwrite.output.GM.native = 1;
-matlabbatch{1}.spm.tools.cat.estwrite.output.GM.mod = 0;
-matlabbatch{1}.spm.tools.cat.estwrite.output.GM.dartel = 0;
-matlabbatch{1}.spm.tools.cat.estwrite.output.WM.native = 1;
-matlabbatch{1}.spm.tools.cat.estwrite.output.WM.mod = 0;
-matlabbatch{1}.spm.tools.cat.estwrite.output.WM.dartel = 0;
-matlabbatch{1}.spm.tools.cat.estwrite.output.CSF.native = 1;
-matlabbatch{1}.spm.tools.cat.estwrite.output.CSF.warped = 0;
-matlabbatch{1}.spm.tools.cat.estwrite.output.CSF.mod = 0;
-matlabbatch{1}.spm.tools.cat.estwrite.output.CSF.dartel = 0;
-matlabbatch{1}.spm.tools.cat.estwrite.output.bias.warped = 0;
-matlabbatch{1}.spm.tools.cat.estwrite.output.warps = [1 0];
-matlabbatch{1}.spm.tools.cat.estwrite.extopts.segmentation.cleanupstr = 0;
-spm_jobman('run',matlabbatch);
-clear matlabbatch
 
 %==========================================================================
-% function [vol_simu, vol_corr] = add_bias_field(vol_simu, vol_corr, rf, idef_name, pth)
+% function [Ysimu, rf_field]  = add_bias_field(Ysimu, rf, idef_name, pth)
 %==========================================================================
-function [vol_simu, vol_corr] = add_bias_field(vol_simu, vol_corr, rf, idef_name, pth)
+function [Ysimu, rf_field] = add_bias_field(Ysimu, rf, idef_name, pth)
 
 fprintf('Transform RF field to native space.\n');
 % warp defined rf field to native space
@@ -719,17 +636,15 @@ end
 
 ind = isfinite(rf_field);
 rf_field = 1 + rf_field - mean(rf_field(ind));
-vol_simu(ind) = rf_field(ind).*vol_simu(ind);
-if ~isempty(vol_corr)
-  vol_corr(ind) = rf_field(ind).*vol_corr(ind);
-end
+Ysimu(ind) = rf_field(ind).*Ysimu(ind);
+
 
 %==========================================================================
-% function [vol_simu, rf_field] = add_simulated_bias_field(vol_simu, rf)
+% function [Ysimu, rf_field] = add_simulated_bias_field(Ysimu, rf)
 %==========================================================================
-function [vol_simu, rf_field] = add_simulated_bias_field(vol_simu, rf)
+function [Ysimu, rf_field] = add_simulated_bias_field(Ysimu, rf)
 
-dim = size(vol_simu);
+dim = size(Ysimu);
 
 % set seeds to defined value
 rng(rf.type(2),'twister')
@@ -795,7 +710,8 @@ end
 rf_field = 1 + rf_field - mean(rf_field(:));
 
 % and finally apply bias field
-vol_simu = rf_field.*vol_simu;
+Ysimu = rf_field.*Ysimu;
+
 
 %==========================================================================
 % function idef_name = invert_deformations(simu)
@@ -804,38 +720,12 @@ function idef_name = invert_deformations(simu)
 
 % run deformation utility if inverse deformation field does not exist
 [pth, name, ext] = spm_fileparts(simu.name);
-if ~exist(fullfile(pth,'mri',['y_inv_' name ext]),'file')
-  matlabbatch{1}.spm.util.defs.comp{1}.inv.comp{1}.def = {fullfile(pth,'mri',['y_' name ext])};
+if ~exist(fullfile(pth,['y_inv_' name ext]),'file')
+  matlabbatch{1}.spm.util.defs.comp{1}.inv.comp{1}.def = {fullfile(pth,['y_' name ext])};
   matlabbatch{1}.spm.util.defs.comp{1}.inv.space = {simu.name};
   matlabbatch{1}.spm.util.defs.out{1}.savedef.ofname = ['inv_' name];
-  matlabbatch{1}.spm.util.defs.out{1}.savedef.savedir.saveusr = {fullfile(pwd,'mri')};
+  matlabbatch{1}.spm.util.defs.out{1}.savedef.savedir.saveusr = {pwd};
   spm_jobman('run',matlabbatch);
   clear matlabbatch
 end
-idef_name = fullfile(pth, 'mri',['y_inv_' name ext]);
-
-%==========================================================================
-% function [WMHs, res, K] = simulate_WMHs(res, K, template_dir, idef_name)
-%==========================================================================
-function [WMHs, res, K] = simulate_WMHs(res, K, template_dir, idef_name)
-
-% warp CAT12 WMH map to native space
-fprintf('Transform WMH map to native space.\n');
-WMH_name = fullfile(template_dir,'cat_wmh_miccai2017.nii');
-WMHs = cat_vol_defs(struct('field1',{{idef_name}},'images',{{WMH_name}},'interp',1,'modulate',0));
-WMHs = single(WMHs{1}{1});
-
-% use mean of GM for additional class
-intensity_WMHs = mean(res.mn(1,res.lkp==1));
-K = K + 1;
-res.mn(1,K) = 0.8*intensity_WMHs;
-
-%==========================================================================
-% function [vessels, res, K] = simulate_vessels(res, K)
-%==========================================================================
-function [vessels, res, K] = simulate_vessels(res, K)
-
-vessels = single(spm_read_vols(spm_vol('colin27_vessels_tal_hires.nii')));
-int_vessels = max(res.mn);
-K = K + 1;
-res.mn(1,K) = int_vessels;
+idef_name = fullfile(pth,['y_inv_' name ext]);
