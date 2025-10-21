@@ -114,6 +114,9 @@ def.save       = 0;
 if nargin < 2, rf = def;
 else, rf = cat_io_checkinopt(rf, def); end
 
+% iterations for correction for regions with too large thickness values
+n_thickness_corrections = 2;
+
 [pth, name, ~] = spm_fileparts(simu.name);
 pth_root = fileparts(which(mfilename));
 
@@ -172,30 +175,9 @@ V = res.image(1);
 d   = V.dim(1:3);
 vx = sqrt(sum(V.mat(1:3,1:3).^2));
 
-% obtain SPM segmentations
-[Ysrc, Ycls, Ydef] = cat_spm_preproc_write8(res,zeros(max(res.lkp),4),zeros(1,2),[0 0],0,2);
-
-% write forward deformation field
-idef_name = fullfile(pth, ['y_inv_' name ext]);
-
-if ~exist(idef_name,'file')
-  def_name = fullfile(pth, ['y_' name ext]);
-  Ndef = nifti;
-  Ndef.dat  = file_array(def_name,[d,1,3],...
-                                 [spm_type('float32') spm_platform('bigend')],...
-                                 0,1,0);
-  Ndef.mat = V.mat;
-  Ndef.mat0 = V.mat;
-  create(Ndef);
-  Ndef.dat(:,:,:,1,1) = Ydef(:,:,:,1);
-  Ndef.dat(:,:,:,1,2) = Ydef(:,:,:,2);
-  Ndef.dat(:,:,:,1,3) = Ydef(:,:,:,3);
-  
-  % write inverse deformation field
-  idef_name = invert_deformations(simu);
-  spm_unlink(def_name);
-  clear Ydef
-end
+% obtain SPM segmentations and write inverse deformation field
+[Ysrc, Ycls] = cat_spm_preproc_write8(res,zeros(max(res.lkp),4),zeros(1,2),[1 0],0,2);
+idef_name = fullfile(pth, ['iy_' name ext]);
 
 % LAS correction and SANLM denoising
 Ycorr = cat_main_LASsimple(Ysrc,Ycls);
@@ -249,7 +231,8 @@ else
 end
 
 if any(simu.thickness)
-  [label_pve, Yseg] = simulate_thickness(label_pve, simu, Yseg, d, template_dir, idef_name, vx, order);
+  [label_pve, Yseg] = simulate_thickness(label_pve, simu, Yseg, d, ...
+        template_dir, idef_name, vx, order, n_thickness_corrections);
 end
 
 Ysimu = synthesize_from_segmentation(Yseg, name, res, mn, d);
@@ -416,10 +399,11 @@ return
 
 
 %==========================================================================
-% function [label, Yseg] = simulate_thickness(label, simu, Yseg, d, template_dir, idef_name, vx, order)
+% function [label, Yseg] = simulate_thickness(label, simu, Yseg, d, template_dir, idef_name, vx, order, n_thickness_corrections)
 %==========================================================================
-function [label, Yseg] = simulate_thickness(label, simu, Yseg, d, template_dir, idef_name, vx, order)
+function [label, Yseg] = simulate_thickness(label, simu, Yseg, d, template_dir, idef_name, vx, order, n_thickness_corrections)
 
+Yp0toC = @(Yp0,c) 1-min(1,abs(Yp0-c));
 csf_val = 1; gm_val = 2; wm_val = 3;
 
 % warp atlas to native space using categorical interpolation
@@ -440,6 +424,10 @@ mask_thickness{3} = (hammers > 55.5 & hammers < 59.5) | (hammers > 27.5 & hammer
 mask_thickness{2} = ~mask_thickness{1} & ~mask_thickness{3}; % remaining parts
 
 mask = round(label) > 0;
+
+% force stronger PVE effects by smoothing
+spm_smooth(label,label,2.5*vx);
+
 label0 = label;
 
 label1 = cell(numel(simu.thickness),1);
@@ -448,11 +436,13 @@ Yseg(:,:,:,1:3) = 0;
 
 % vary range of PVE from -0.25..0.25 in 20 steps
 pve_range = linspace(-0.25,0.25,20);
+
 for pve_step = 1:numel(pve_range)
 
-  % euclidean distance to wm
-  wm  = round(label+pve_range(pve_step)) > gwm_val;
-  wm = cat_vol_morph(wm,'close',1);
+  % define wm, remove disconnected regions and dilate it to thickne thin gyri
+  wm  = round(label+pve_range(pve_step)) == wm_val;
+  wm = cat_vol_morph(wm,'l',1);
+  wm = cat_vol_morph(wm,'dc',1);
   
   % euclidean distance to wm
   Dwm = (bwdist(wm) - 0.5) * mean(vx); % also consider voxelsize/2 correction of distance
@@ -460,38 +450,36 @@ for pve_step = 1:numel(pve_range)
   for k=1:numel(simu.thickness)
   
     label1{k} = round(label+pve_range(pve_step));
-  
-    % set gm and csf to csf
-    label1{k}(label1{k} < wm_val & label1{k} > csf_val) = csf_val;
-  
-    % set dilated gm to gm
-    label1{k}(label1{k} < wm_val & Dwm <= simu.thickness(k)) = gm_val;
-      
-    % check distance inside gm
-    D = (bwdist(label1{k}==csf_val) + bwdist(label1{k}==wm_val) - 1)*mean(vx);
-    D(label1{k}~=gm_val) = 0;
-        
-    % dilate gm where distance in gm is too large to make more space
-    gm1 = cat_vol_morph(D > 0.97*simu.thickness(k),'o',1);
-    gm1 = cat_vol_morph(gm1,'dd',2);
-    gm1(~mask) = 0;
-    label1{k}(gm1 > 0 | label1{k} == gm_val) = csf_val;
-    
-    % euclidean distance to wm
-    wm  = label1{k}==wm_val;
-    Dwm = (bwdist(wm) - 0.5) * mean(vx);
-    
+
     label1{k}(~wm) = csf_val;
     label1{k}(~mask) = 0;
     
-    % set dilated gm to gm
-    label1{k}(label1{k} == csf_val & Dwm <= simu.thickness(k)) = gm_val;
-  
-    % get original label for basal ganglia and cerebellum
-    label1{k}(mask_orig) = label0(mask_orig);
+    % limit dilated gm to defined thickness
+    label1{k}(label1{k} == csf_val & Dwm <= simu.thickness(k)) = gm_val;  
+
+    for i=1:n_thickness_corrections
+      % check distance inside gm
+      D = (bwdist(label1{k}==csf_val) + bwdist(label1{k}==wm_val) - 1)*mean(vx);
+      D(label1{k}~=gm_val) = 0;
+          
+      % dilate gm where distance in gm is too large to make more space
+      gm1 = cat_vol_morph(D > 0.97*simu.thickness(k),'o',1);
+      gm1 = cat_vol_morph(gm1,'dd',1);
+      gm1(~mask) = 0;
+      
+      % widen sulci is thickness was too large for that area
+      label1{k}(gm1 > 0 | label1{k} == gm_val) = csf_val;
+      
+      % euclidean distance to wm
+      wm  = label1{k}==wm_val;
+      Dwm = (bwdist(wm) - 0.5) * mean(vx);
+      
+      % limit dilated gm to defined thickness
+      label1{k}(label1{k} == csf_val & Dwm <= simu.thickness(k)) = gm_val;  
+    end
+    
   end
-  
-  
+    
   % replace tissue maps with modified label
   for j = 1:3
   
@@ -504,6 +492,9 @@ for pve_step = 1:numel(pve_range)
         tmp_seg(mask_thickness{k}) = single(round(label1{k}(mask_thickness{k})) == (j));
       end
     end
+    % get original label for basal ganglia and cerebellum
+    tmp_seg(mask_orig) = Yp0toC(label0(mask_orig), j);
+
     Yseg(:,:,:,order(j)) = Yseg(:,:,:,order(j)) + tmp_seg/numel(pve_range);
   end
 end
@@ -514,7 +505,6 @@ label = zeros(d, 'single');
 for k = 1:3
     label = label + k*Yseg(:,:,:,order(k));
 end
-
 
 %==========================================================================
 % function Yseg = simulate_atrophy(simu, Yseg, dims, template_dir, idef_name)
@@ -711,21 +701,3 @@ rf_field = 1 + rf_field - mean(rf_field(:));
 
 % and finally apply bias field
 Ysimu = rf_field.*Ysimu;
-
-
-%==========================================================================
-% function idef_name = invert_deformations(simu)
-%==========================================================================
-function idef_name = invert_deformations(simu)
-
-% run deformation utility if inverse deformation field does not exist
-[pth, name, ext] = spm_fileparts(simu.name);
-if ~exist(fullfile(pth,['y_inv_' name ext]),'file')
-  matlabbatch{1}.spm.util.defs.comp{1}.inv.comp{1}.def = {fullfile(pth,['y_' name ext])};
-  matlabbatch{1}.spm.util.defs.comp{1}.inv.space = {simu.name};
-  matlabbatch{1}.spm.util.defs.out{1}.savedef.ofname = ['inv_' name];
-  matlabbatch{1}.spm.util.defs.out{1}.savedef.savedir.saveusr = {pwd};
-  spm_jobman('run',matlabbatch);
-  clear matlabbatch
-end
-idef_name = fullfile(pth,['y_inv_' name ext]);
