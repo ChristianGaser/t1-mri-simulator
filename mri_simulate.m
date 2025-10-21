@@ -115,7 +115,7 @@ if nargin < 2, rf = def;
 else, rf = cat_io_checkinopt(rf, def); end
 
 % iterations for correction for regions with too large thickness values
-n_thickness_corrections = 2;
+n_thickness_corrections = 0;
 
 [pth, name, ~] = spm_fileparts(simu.name);
 pth_root = fileparts(which(mfilename));
