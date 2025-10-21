@@ -114,7 +114,7 @@ def.save       = 0;
 if nargin < 2, rf = def;
 else, rf = cat_io_checkinopt(rf, def); end
 
-[pth, name, ext] = spm_fileparts(simu.name);
+[pth, name, ~] = spm_fileparts(simu.name);
 pth_root = fileparts(which(mfilename));
 
 % name of seg8.mat file that contains SPM12 segmentation parameters
@@ -178,7 +178,7 @@ vx = sqrt(sum(V.mat(1:3,1:3).^2));
 % write forward deformation field
 idef_name = fullfile(pth, ['y_inv_' name ext]);
 
-if ~exist(idef_name)
+if ~exist(idef_name,'file')
   def_name = fullfile(pth, ['y_' name ext]);
   Ndef = nifti;
   Ndef.dat  = file_array(def_name,[d,1,3],...
@@ -236,7 +236,7 @@ for k=1:3
 end
 
 % extend target voxel size if needed
-if numel(simu.resolution) == 1
+if isscalar(simu.resolution)
   if isnan(simu.resolution)
     simu.resolution = vx;
   else
@@ -252,7 +252,7 @@ if any(simu.thickness)
   [label_pve, Yseg] = simulate_thickness(label_pve, simu, Yseg, d, template_dir, idef_name, vx, order);
 end
 
-Ysimu = synthesize_from_segmentation(Yseg, simu, name, res, mn, d);
+Ysimu = synthesize_from_segmentation(Yseg, name, res, mn, d);
 
 % apply either predefined MNI bias field or simulated bias filed before resizing
 % to defined output resolution
@@ -323,7 +323,7 @@ if simu_atrophy
   end
 end
 if any(simu.thickness)
-  if numel(simu.thickness) == 1
+  if isscalar(simu.thickness)
     str = sprintf('%s_thickness%gmm',str,simu.thickness);
   else
     str = sprintf('%s_thickness%gmm-%gmm',str,min(simu.thickness),max(simu.thickness));
@@ -420,7 +420,7 @@ return
 %==========================================================================
 function [label, Yseg] = simulate_thickness(label, simu, Yseg, d, template_dir, idef_name, vx, order)
 
-csf_val = 1; cgm_value = 1.5; gm_val = 2; wm_val = 3; gwm_val = 2.5;
+csf_val = 1; gm_val = 2; wm_val = 3;
 
 % warp atlas to native space using categorical interpolation
 fprintf('Transform atlas to native space. This may take a while...\n');
@@ -555,9 +555,9 @@ end
 
 
 %==========================================================================
-% function Ysimu = synthesize_from_segmentation(vol_seg, simu, name, res, mn, d)
+% function Ysimu = synthesize_from_segmentation(vol_seg, name, res, mn, d)
 %==========================================================================
-function Ysimu = synthesize_from_segmentation(vol_seg, simu, name, res, mn, d)
+function Ysimu = synthesize_from_segmentation(vol_seg, name, res, mn, d)
 % go through all peaks that are defined
 % mainly copied from spm_preproc_write8.m
 
