@@ -9,6 +9,18 @@ function mri_simulate(simu, rf)
 %   It supports simulations of atrophy or cortical thickness modifications. 
 %   Preprocessing with SPM12 segmentation is required for custom images.
 %
+%   Thickness/PVE pipeline (when simu.thickness is set):
+%   - A constant cortical thickness (global or region-wise) is synthesized by
+%     expanding GM outward from the original WM using a Euclidean distance map.
+%   - To obtain partial-volume-like transitions, the label boundary is shifted
+%     across 20 sub-voxel offsets in the range [-0.25, 0.25] voxels, simulating
+%     realistic boundary uncertainty. Each offset yields a hard label image
+%     (CSF=1, GM=2, WM=3), and the results are averaged to produce a smooth
+%     PVE-like label map.
+%   - The final PVE label map is then used to synthesize a T1 image from the
+%     SPM segmentation model by replacing GM/WM/CSF class posteriors and using
+%     their Gaussian mixture parameters (means, variances, weights).
+%
 % Syntax:
 %   mri_simulate(simu, rf)
 %
@@ -360,6 +372,17 @@ end
 %==========================================================================
 % function t = transf(B1,B2,B3,T)
 % from spm_preproc_write8.m
+%
+% Purpose
+%   Reconstruct a low-rank 3D field (e.g., bias field) using separable DCT
+%   bases along x/y/z with coefficients T.
+%
+% Inputs
+%   B1,B2,B3 - DCT basis matrices for x, y, and z.
+%   T        - Coefficient tensor; if empty, a zero field is returned.
+%
+% Output
+%   t        - Reconstructed field with size [size(B1,1) size(B2,1) size(B3,1)].
 %==========================================================================
 function t = transf(B1,B2,B3,T)
 if ~isempty(T)
@@ -375,6 +398,20 @@ return
 %==========================================================================
 % function p = likelihoods(f,bf,mg,mn,vr)
 % from spm_preproc_write8.m
+%
+% Purpose
+%   Compute per-voxel likelihoods for a Gaussian mixture model given features
+%   (optionally bias-corrected) and component parameters.
+%
+% Inputs
+%   f   - cell array with one feature image; values are vectorized internally.
+%   bf  - optional bias field multiplier (same shape as f{1}); [] for none.
+%   mg  - mixture weights for each Gaussian component (1 x K).
+%   mn  - means per component (N x K, N=#features).
+%   vr  - covariance matrices per component (N x N x K).
+%
+% Output
+%   p   - per-voxel likelihoods for each component (numel(f{1}) x K).
 %==========================================================================
 function p = likelihoods(f,bf,mg,mn,vr)
 K  = numel(mg);
@@ -400,6 +437,66 @@ return
 
 %==========================================================================
 % function [label, Yseg] = simulate_thickness(label, simu, Yseg, d, template_dir, idef_name, vx, order, n_thickness_corrections)
+%
+% Purpose
+%   Synthesize a constant cortical thickness by growing GM outward from the
+%   original WM using an Euclidean distance map, and convert the resulting
+%   hard labels into a partial-volume-like (PVE) segmentation by boundary
+%   jittering and averaging.
+%
+% Inputs
+%   label    - single(dims): Current PVE-like label image with values in [1..3]
+%              (CSF=1, GM=2, WM=3). Used as baseline and to preserve subcortical
+%              and cerebellar regions.
+%   simu     - struct: Simulation options. Relevant fields:
+%                .thickness: either a scalar (global thickness, in mm) or a
+%                            3-element vector [occipital rest frontal], in mm.
+%   Yseg     - single(dims,3): Current tissue probability/label volumes in the
+%              order specified by 'order'. Will be overwritten by the simulated
+%              PVE-like segmentation created here.
+%   d        - [nx ny nz]: Volume dimensions.
+%   template_dir - char: Path to CAT/SPM template directory (for Hammer atlas).
+%   idef_name    - char: Filename of inverse deformation field to warp atlas
+%                        into subject/native space with categorical interpolation.
+%   vx       - [vx vy vz]: Voxel sizes in mm.
+%   order    - [3x1] int: Mapping from class index (CSF/GM/WM) to Yseg order.
+%   n_thickness_corrections - int: Optional iterations for correcting regions
+%                        where the requested thickness is too large for sulci;
+%                        set to 0 for default behavior.
+%
+% Outputs
+%   label    - single(dims): New PVE-like label map in [1..3] after averaging
+%              across boundary jitters, aligned with Yseg/order.
+%   Yseg     - single(dims,3): Updated class volumes (CSF/GM/WM) representing
+%              the simulated PVE-like segmentation.
+%
+% Algorithm
+%   1) Atlas masks: Warp Hammer atlas to native space and build masks to exclude
+%      subcortical/cerebellar regions from thickness manipulation. Optionally
+%      define region masks to apply three distinct thickness values (occipital,
+%      rest, frontal) when simu.thickness is a 3-vector.
+%   2) Boundary jittering (PVE simulation): To emulate partial volume effects,
+%      shift the label boundaries by 20 sub-voxel offsets uniformly spaced in
+%      [-0.25, 0.25] voxels. For each offset:
+%        a. Threshold labels to obtain a hard WM mask and clean it with simple
+%           morphological steps.
+%        b. Compute Euclidean distance transform from WM (compensated by 0.5*voxel).
+%        c. Set CSF everywhere, then assign GM to voxels where D_WM <= thickness
+%           (per region), preserving WM where present.
+%        d. Optionally correct gyri too thin for the requested thickness by
+%           widening sulci (n_thickness_corrections>0).
+%        e. Convert the hard labels (1..3) to one-hot class volumes and add to
+%           an accumulator.
+%   3) Average the 20 accumulated volumes to form a smooth PVE-like segmentation
+%      and rebuild the final label image in [1..3] by weighted sum with class IDs.
+%
+% Notes
+%   - Class encoding: CSF=1, GM=2, WM=3 throughout.
+%   - When simu.thickness is scalar, the same thickness is applied globally.
+%     When it has 3 values, they are applied to occipital, rest, and frontal
+%     regions as defined by the Hammer atlas masks.
+%   - This function modifies Yseg directly to reflect the new PVE-like tissue
+%     maps, which are later used by the synthesis step to generate a T1 image.
 %==========================================================================
 function [label, Yseg] = simulate_thickness(label, simu, Yseg, d, template_dir, idef_name, vx, order, n_thickness_corrections)
 
@@ -508,6 +605,20 @@ end
 
 %==========================================================================
 % function Yseg = simulate_atrophy(simu, Yseg, dims, template_dir, idef_name)
+%
+% Purpose
+%   Apply regional atrophy by increasing CSF (and effectively reducing GM)
+%   within specified atlas ROIs warped into native space.
+%
+% Inputs
+%   simu         - struct with .atrophy = {atlasName, roiIds[], factors[]}
+%   Yseg         - single(dims,3): tissue maps (CSF/GM/WM order as used).
+%   dims         - [nx ny nz] dimensions of the volume.
+%   template_dir - path to atlas templates; atlas is warped categorically.
+%   idef_name    - inverse deformation field to native space.
+%
+% Output
+%   Yseg         - updated tissue maps with CSF increased in target ROIs.
 %==========================================================================
 function Yseg = simulate_atrophy(simu, Yseg, dims, template_dir, idef_name)
 
@@ -546,6 +657,20 @@ end
 
 %==========================================================================
 % function Ysimu = synthesize_from_segmentation(vol_seg, name, res, mn, d)
+%
+% Purpose
+%   Generate a T1-like image from provided CSF/GM/WM maps by inserting them
+%   into SPM's mixture model and computing the expected intensity per voxel.
+%
+% Inputs
+%   vol_seg - single(dims,3): tissue maps used in place of SPM posteriors.
+%   name    - base name for progress display.
+%   res     - struct from SPM segmentation (mg, mn, vr, Tbias, etc.).
+%   mn      - 3x1 means for CSF/GM/WM replacing the corresponding mixture means.
+%   d       - [nx ny nz] dimensions.
+%
+% Output
+%   Ysimu   - synthesized T1-weighted image volume (single).
 %==========================================================================
 function Ysimu = synthesize_from_segmentation(vol_seg, name, res, mn, d)
 % go through all peaks that are defined
@@ -607,6 +732,20 @@ spm_progress_bar('clear');
 
 %==========================================================================
 % function [Ysimu, rf_field]  = add_bias_field(Ysimu, rf, idef_name, pth)
+%
+% Purpose
+%   Apply a predefined RF bias field (A/B/C) from template space to native
+%   space, scaled by rf.percent, optionally invert for negative percent.
+%
+% Inputs
+%   Ysimu     - simulated image.
+%   rf        - struct with .percent (signed), .type ('A'|'B'|'C').
+%   idef_name - inverse deformation field for warping the RF template.
+%   pth       - path to directory containing rf100_*.nii fields.
+%
+% Outputs
+%   Ysimu     - modulated image.
+%   rf_field  - applied RF field in native space.
 %==========================================================================
 function [Ysimu, rf_field] = add_bias_field(Ysimu, rf, idef_name, pth)
 
@@ -631,6 +770,19 @@ Ysimu(ind) = rf_field(ind).*Ysimu(ind);
 
 %==========================================================================
 % function [Ysimu, rf_field] = add_simulated_bias_field(Ysimu, rf)
+%
+% Purpose
+%   Create a smooth, random RF bias field via FFT-domain filtering with a
+%   strength-dependent grid size, interpolate to image size, scale by rf.percent,
+%   and apply to the simulated image.
+%
+% Inputs
+%   Ysimu  - image to modulate.
+%   rf     - struct: .type = [strength, rngSeed], .percent amplitude (signed).
+%
+% Outputs
+%   Ysimu    - modulated image.
+%   rf_field - generated RF field after smoothing and scaling.
 %==========================================================================
 function [Ysimu, rf_field] = add_simulated_bias_field(Ysimu, rf)
 
