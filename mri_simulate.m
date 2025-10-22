@@ -885,10 +885,51 @@ Ysimu = rf_field.*Ysimu;
 
 
 %==========================================================================
-% function [WMH, res] = simulate_WMHs(simu, res, label_pve, template_dir, idef_name)
+% function [WMH, res, label_pve] = simulate_WMHs(simu, res, label_pve, template_dir, idef_name)
 %
 % Purpose
-%   Add simulated white matter hyperintensities (WMHs)
+%   Add simulated white matter hyperintensities (WMHs) consistent with a
+%   prior WMH probability map and subject anatomy. The routine warps a WMH
+%   atlas to native space, modulates it by a random field and a user-defined
+%   strength, and injects the resulting WMH class into the PVE label image
+%   and mixture model used for synthesis.
+%
+% Inputs
+%   simu         - struct with field .WMH (double): strength parameter (>1
+%                  increases WMH expression; values close to 1 keep it mild).
+%   res          - SPM segmentation result struct (contains image header and
+%                  GMM parameters mg/mn/vr/lkp; mn is updated for WMH class).
+%   label_pve    - single(dims): current PVE-like label image in [1..3] (CSF=1,
+%                  GM=2, WM=3). Will be extended to [1..4] where 4 encodes WMH.
+%   template_dir - path containing the WMH prior map 'cat_wmh_miccai2017.nii'.
+%   idef_name    - inverse deformation field to warp the WMH atlas to native
+%                  space (continuous interpolation for intensities).
+%
+% Outputs
+%   WMH          - single(dims): simulated WMH map in [0..1].
+%   res          - struct: mixture model with an added WMH class (mn updated).
+%   label_pve    - single(dims): updated label image where WMH contributes as
+%                  an additional class (value 4 contribution), later used for
+%                  synthesis.
+%
+% Algorithm
+%   1) Warp the MICCAI2017 WMH prior map to native space and lightly smooth it.
+%   2) Create a random 3D field, resample it to image dimensions, threshold to
+%      form spatial support for patchy WMH distribution.
+%   3) Erode WM to ensure spacing from GM and constrain WMHs to deep WM.
+%   4) Combine WMH prior^(1/(strength-0.8)) with random field and WM mask,
+%      smooth and normalize to [0,1].
+%   5) Update label_pve by adding 2*WMH and clipping to max class label 4,
+%      thereby introducing an additional WMH class contribution.
+%   6) Extend the GMM by adding a WMH class intensity equal to the GM mean
+%      (heuristic choice used for synthesis).
+%
+% Notes
+%   - Class encoding after this step: CSF=1, GM=2, WM=3, WMH=4.
+%   - The strength parameter shapes the prior map nonlinearly; larger values
+%     emphasize regions with higher WMH probability.
+%   - The WM erosion step helps avoid spuriously labeling GM/CSF boundaries
+%     as WMH.
 %==========================================================================
 function [WMH, res, label_pve] = simulate_WMHs(simu, res, label_pve, template_dir, idef_name)
 
