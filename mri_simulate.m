@@ -80,9 +80,14 @@ function mri_simulate(simu, rf)
 %       - 'save' (logical): Option to save the simulated bias field if 'type' is
 %         numeric and 'save' is set to 1.       
 %
-% Optional Inputs:
-%   Default values are used if 'simu' or 'rf' parameters are not provided. See
-%   examples for default structures.
+% Optional Inputs and Defaults:
+%   - If 'simu' and/or 'rf' are omitted, default values are applied internally.
+%     You can also pass a partial struct; any missing fields are filled with
+%     defaults (i.e., user-specified fields override defaults only where set).
+%   - Interactive mode: if 'simu.name' is empty (''), the function opens a file
+%     selection dialog (spm_select) and runs the simulation for the chosen file(s).
+%     This allows you to launch the tool without pre-specifying the input path.
+%   See the examples below for constructing minimal 'simu' and 'rf' structs.
 %
 % Outputs:
 %   Simulated MRI image file based on the specified parameters and features.
