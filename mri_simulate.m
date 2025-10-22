@@ -5,7 +5,8 @@ function mri_simulate(simu, rf)
 %   `mri_simulate` generates simulated MRI images, allowing for T1-weighted
 %   (T1w) imaging simulations. It employs a high-resolution
 %   (e.g., 0.5mm) T1w image, typically Colin27, as a base. Users can introduce
-%   various artifacts and features like Gaussian noise, and RF B1 inhomogeneities. 
+%   various artifacts and features like white matter hyperintensities
+%   (WMHs), Gaussian noise, and RF B1 inhomogeneities. 
 %   It supports simulations of atrophy or cortical thickness modifications. 
 %   Preprocessing with SPM12 segmentation is required for custom images.
 %
@@ -32,6 +33,7 @@ function mri_simulate(simu, rf)
 %         for MATLAB's default behavior.
 %       - 'resolution' (double or [x, y, z]): Spatial resolution of the
 %         simulated image. Use 'NaN' for keeping original image resolution
+%       - 'WMH' (logical): Flag to add white matter hyperintensities. 
 %       - 'atrophy' (cell): Specifies regions of interest (ROIs) for simulating
 %         atrophy, including atlas name, ROI IDs, and atrophy values. Multiple ROIs 
 %         and the respective atrophy values can be defined. An atrophy value of 
@@ -52,7 +54,6 @@ function mri_simulate(simu, rf)
 %         Hammer atlas is used to define these areas, as well as subcortical areas 
 %         and the cerebellum, which are excluded from the thickness simulation to 
 %         obtain a more realistic MRI. Either thickness or atrophy can be simulated.
-%       - 'save' (logical): Flag to save the ground truth label if set to 1.
 %   rf (struct): RF bias field parameters.
 %       - 'percent' (double): Amplitude of the bias field in percentage.
 %         Negative values invert the field.
@@ -80,7 +81,7 @@ function mri_simulate(simu, rf)
 %       mri_simulate(simu, rf);
 %
 % Examples:
-%   Example 1 - Basic simulation with specific noise:
+%   Example 1 - Basic simulation with specific noise with 0.5mm voxel size:
 %       simu = struct('name', 'colin27_t1_tal_hires.nii', 'pn', 3,...
 %                     'resolution', 0.5,...
 %                     'atrophy', [], 'rng', 42);
@@ -96,7 +97,8 @@ function mri_simulate(simu, rf)
 %       rf = struct('percent', 15, 'type', [3, 42]);
 %       mri_simulate(simu, rf);
 %
-%   Example 3 - Thickness simulation:
+%   Example 3 - Thickness simulation with 3 different thickness values using 
+%   original voxel size:
 %       simu = struct('name', 'colin27_t1_tal_hires.nii', 'pn', 3,...
 %                     'resolution', NaN,...
 %                     'atrophy', [], 'rng', [],...
@@ -110,10 +112,10 @@ function mri_simulate(simu, rf)
 def.name       = 'colin27_t1_tal_hires.nii';
 def.pn         = 3;
 def.resolution = NaN;
+def.WMH        = 0;
 def.atrophy    = [];
 def.thickness  = 0;
 def.rng        = 0;
-def.save       = 1;
 
 if nargin < 1, simu = def;
 else, simu = cat_io_checkinopt(simu, def); end
@@ -179,6 +181,11 @@ else
   simu_atrophy = 0;
 end
 
+if simu.WMH < 1 && simu.WMH ~= 0
+  fprintf('Strength of simulating WMHs should be either 0 or >=1.\n');
+  return
+end
+
 % load seg8.mat file and define some parameters
 res = load(mat_name);
 [~, bname, ext] = spm_fileparts(res.image(1).fname);
@@ -229,16 +236,28 @@ for k=1:3
   end
 end
 
+% load WMH map
+if simu.WMH
+  [WMH, res, label_pve] = simulate_WMHs(simu, res, label_pve, template_dir, idef_name);
+else
+  WMH = [];
+end
+
 % extend target voxel size if needed
 if isscalar(simu.resolution)
   if isnan(simu.resolution)
     simu.resolution = vx;
+    change_resolution = 0;
   else
     simu.resolution = simu.resolution * ones(1,3);
+    change_resolution = 1;
   end
 else
   if isnan(simu.resolution(1))
     simu.resolution = vx;
+    change_resolution = 0;
+  else
+    change_resolution = 1;
   end
 end
 
@@ -247,7 +266,7 @@ if any(simu.thickness)
         template_dir, idef_name, vx, order, n_thickness_corrections);
 end
 
-Ysimu = synthesize_from_segmentation(Yseg, name, res, mn, d);
+Ysimu = synthesize_from_segmentation(Yseg, name, res, mn, d, WMH);
 
 % apply either predefined MNI bias field or simulated bias filed before resizing
 % to defined output resolution
@@ -271,20 +290,21 @@ Vres.mat = spm_matrix(P);
 
 % output in defined resolution
 volres   = zeros(Vres.dim);
-if simu.save
-  labelres_pve = zeros(Vres.dim);
-end
+labelres_pve = zeros(Vres.dim);
 
-for sl = 1:Vres.dim(3)
-  M = spm_matrix([0 0 sl 0 0 0 1 1 1]);
-  M1 = Vres.mat\V.mat\M;
-  
-  % use sinc interpolation for simulated image
-  volres(:,:,sl) = spm_slice_vol(Ysimu,M1,Vres.dim(1:2),-5);
-  if simu.save
+if change_resolution
+  for sl = 1:Vres.dim(3)
+    M = spm_matrix([0 0 sl 0 0 0 1 1 1]);
+    M1 = Vres.mat\V.mat\M;
+    
+    % use sinc interpolation for simulated image
+    volres(:,:,sl) = spm_slice_vol(Ysimu,M1,Vres.dim(1:2),-5);
     % and linear interpolation for label image
     labelres_pve(:,:,sl) = spm_slice_vol(label_pve,M1,Vres.dim(1:2),1);
   end
+else % we can skip interpolation if voxels size is the same
+  volres = Ysimu;
+  labelres_pve = label_pve;
 end
 
 volres = volres / mx_vol;
@@ -309,7 +329,9 @@ if (exist('rf','var') && rf.percent ~= 0)
     str = sprintf('_rf%g_%s', rf.percent, rf.type);
   end
 end
-
+if simu.WMH
+  str = sprintf('%s_WMH%g', str, simu.WMH);
+end
 if simu_atrophy
   if numel(simu.atrophy{2}) > 1
     str = sprintf('%s_%s_multi',str,simu.atrophy{1});
@@ -343,20 +365,22 @@ Vres.fname = simu_name;
 spm_write_vol(Vres, volres.*mind);
 
 % write ground truth label
-if simu.save
-  if any(simu.thickness)
-    label_pve_name = fullfile(pth, sprintf('label_pve_%gmm_%s%s.nii', mean_resolution, name, str));
-  else
-    label_pve_name = fullfile(pth, sprintf('label_pve_%gmm_%s.nii', mean_resolution, name));
-  end
-  
-  fprintf('Save %s\n', label_pve_name);
-  Vres.fname = label_pve_name;
-  Vres.pinfo = [1/255/3 0 352]';
-  Vres.dt    = [4 0];
-  spm_write_vol(Vres, labelres_pve);
-
+if simu.WMH
+  WMHstr = sprintf('_WMH%g', simu.WMH);
+else
+  WMHstr = '';
 end
+if any(simu.thickness)
+  label_pve_name = fullfile(pth, sprintf('label_pve_%gmm_%s%s%s.nii', mean_resolution, name, str, WMHstr));
+else
+  label_pve_name = fullfile(pth, sprintf('label_pve_%gmm_%s%s.nii', mean_resolution, name, WMHstr));
+end
+
+fprintf('Save %s\n', label_pve_name);
+Vres.fname = label_pve_name;
+Vres.pinfo = [1/255/3 0 352]';
+Vres.dt    = [4 0];
+spm_write_vol(Vres, labelres_pve);
 
 % save simulated bias field if defined
 if rf.save
@@ -656,7 +680,7 @@ end
 
 
 %==========================================================================
-% function Ysimu = synthesize_from_segmentation(vol_seg, name, res, mn, d)
+% function Ysimu = synthesize_from_segmentation(vol_seg, name, res, mn, d, WMH)
 %
 % Purpose
 %   Generate a T1-like image from provided CSF/GM/WM maps by inserting them
@@ -668,11 +692,12 @@ end
 %   res     - struct from SPM segmentation (mg, mn, vr, Tbias, etc.).
 %   mn      - 3x1 means for CSF/GM/WM replacing the corresponding mixture means.
 %   d       - [nx ny nz] dimensions.
+%   WMH     - optionally added white matter hyperintensities (WMHs)
 %
 % Output
 %   Ysimu   - synthesized T1-weighted image volume (single).
 %==========================================================================
-function Ysimu = synthesize_from_segmentation(vol_seg, name, res, mn, d)
+function Ysimu = synthesize_from_segmentation(vol_seg, name, res, mn, d, WMH)
 % go through all peaks that are defined
 % mainly copied from spm_preproc_write8.m
 
@@ -713,6 +738,10 @@ for z = 1:length(x3)
       q1(:,:,ind(j)) = vol_seg(:,:,z,k);
       res.mn(1,ind(j)) = mn(k);
     end
+  end
+
+  if ~isempty(WMH)
+    q1(:,:,K) = 5*WMH(:,:,z);
   end
   
   s   = sum(q1,3);
@@ -853,3 +882,68 @@ rf_field = 1 + rf_field - mean(rf_field(:));
 
 % and finally apply bias field
 Ysimu = rf_field.*Ysimu;
+
+
+%==========================================================================
+% function [WMH, res] = simulate_WMHs(simu, res, label_pve, template_dir, idef_name)
+%
+% Purpose
+%   Add simulated white matter hyperintensities (WMHs)
+%==========================================================================
+function [WMH, res, label_pve] = simulate_WMHs(simu, res, label_pve, template_dir, idef_name)
+
+Yp0toC = @(Yp0,c) 1-min(1,abs(Yp0-c));
+strength = simu.WMH;
+vx = sqrt(sum(res.image(1).mat(1:3,1:3).^2));
+
+% warp WMH map to native space
+fprintf('Transform WMH map to native space.\n');
+WMH_name = fullfile(template_dir,'cat_wmh_miccai2017.nii');
+WMH = cat_vol_defs(struct('field1',{{idef_name}},'images',{{WMH_name}},'interp',1,'modulate',0));
+WMH = single(WMH{1}{1});
+dim = size(WMH);
+
+% slightly smooth WMH atlas
+spm_smooth(WMH, WMH, 2./vx);
+
+% use filename for obtaining an integer that is used as RNG seed
+[~, fname] = fileparts(res.image(1).fname);
+seed = sum(double(fname));
+rng(seed, 'twister')
+
+N = 2^round(5); % Define the size of the initial 3D field
+
+% Generate a random 3D field
+fieldN = rand(N, N, N);
+
+% Original grid
+[x, y, z] = ndgrid(1:N, 1:N, 1:N);
+
+% New grid dimensions
+[xq, yq, zq] = ndgrid(linspace(1, N, dim(1)), ...
+                      linspace(1, N, dim(2)), ...
+                      linspace(1, N, dim(3)));
+
+% Interpolate using interpn
+field = interpn(x, y, z, fieldN, xq, yq, zq, 'linear');
+field = single(field>0.7);
+
+% find WM in original image and erode it to ensure some space to GM
+WM = cat_vol_morph(Yp0toC(label_pve, 3) > 0.5,'de',3,vx);
+
+% apply strength parameter to WM atlas and combine it with field and WM
+WMH = WMH.^(1/(strength-0.8)).*field.^2.*WM;
+spm_smooth(WMH, WMH, 2./vx);
+WMH = WMH/max(WMH(:));
+
+% correct PVE label and add additional WMH class (which should be a
+% increased in intensities)
+label_pve = label_pve + 2*WMH;
+label_pve(label_pve > 4) = 4;
+
+% use mean of GM for additional class
+K   = numel(res.mg);
+intensity_WMH = mean(res.mn(1,res.lkp==1));
+K = K + 1;
+res.mn(1,K) = intensity_WMH;
+
