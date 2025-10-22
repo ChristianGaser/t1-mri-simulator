@@ -17,6 +17,11 @@ Thickness/PVE pipeline:
 
 The function runs SPM12 segmentation automatically if needed and relies on CAT12 utilities. Ensure SPM12 and CAT12 are on your MATLAB path.
 
+Multi-modality inputs (max 2):
+- You can provide up to two modalities. The first must be T1w; the second is optional (e.g., T2w) and is used only to improve SPM12 multi-channel segmentation. The synthesis output is always T1-like and uses the first (T1w) channel’s intensity model.
+- Pass `simu.name` as either a string (single T1w) or a 1x2 cell array `{t1File, t2File}`. In interactive mode, you’ll first select T1w image(s), then optionally T2w image(s). If multiple images are selected, the counts must match across modalities.
+- When two inputs are given, the second image is coregistered to the first, and files are named according to the first (T1w) image.
+
 ## Requirements
 - MATLAB with SPM12 and CAT12 toolboxes in the path
 - A T1-weighted NIfTI image (default examples use `colin27_t1_tal_hires.nii`)
@@ -26,7 +31,7 @@ The function runs SPM12 segmentation automatically if needed and relies on CAT12
 
 Parameter | Description (Default)
 ----------|------------------------
-name | T1w input image filename. If empty `''`, an interactive file selector opens. (Default: `''`)
+name | Input image(s). Either a single T1w filename or a 1x2 cell array `{T1w, T2w}`. The second modality (if provided) is used only for segmentation. If empty `''`, an interactive file selector opens (T1 first, then optional T2). (Default: `''`)
 pn | Gaussian noise level as percent of the WM peak. (Default: `3`)
 rng | RNG seed for reproducible noise; set `[]` for MATLAB default behavior. (Default: `0`)
 resolution | Output voxel size: scalar (applied to x,y,z) or `[x y z]`. `NaN` keeps the original resolution. (Default: `NaN`)
@@ -104,7 +109,15 @@ rf = struct('percent', 15, 'type', [3, 42], 'save', 0);
 mri_simulate(simu, rf);
 ```
 
-### 5) Interactive mode for example 4:
+### 5) Two-modality input (T1 + T2 for segmentation)
+```matlab
+simu = struct('name', {'colin27_t1_tal_hires.nii', 'colin27_t1_to_t2_tal_hires.nii'}, ...
+              'pn', 3, 'resolution', NaN);
+rf = struct('percent', 20, 'type', 'A', 'save', 0);
+mri_simulate(simu, rf);
+```
+
+### 6) Interactive mode for example 4:
 ```matlab
 simu = struct('pn', 3, 'resolution', NaN, ...
               'WMH', 2, 'rng', []);

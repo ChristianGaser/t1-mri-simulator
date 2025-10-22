@@ -10,6 +10,21 @@ function mri_simulate(simu, rf)
 %   It supports simulations of atrophy or cortical thickness modifications. 
 %   Preprocessing with SPM12 segmentation is required for custom images.
 %
+% Multi-modality inputs (max 2):
+%   - The simulator accepts up to two input modalities. The first must be a
+%     T1-weighted image. The second is optional (e.g., T2-weighted) and is used
+%     only to improve SPM12 segmentation quality via multi-channel segmentation.
+%     Synthesis itself always produces a T1-like image and uses the intensity
+%     model of the first (T1w) channel.
+%   - Provide inputs via `simu.name` as either a string (single T1w) or a
+%     1x2 cell array {t1File, t2File}. In interactive mode, you’ll first be
+%     asked to select T1w image(s), followed by an optional T2w selection; if
+%     multiple images are selected, the counts per modality must match.
+%   - Internally, if two inputs are given, the second image is coregistered to
+%     the first and both are passed to SPM12’s multi-channel segmentation.
+%     The generated files (simulated image, labels, and seg8.mat) are named
+%     according to the first (T1w) image.
+%
 %   Thickness/PVE pipeline (when simu.thickness is set):
 %   - A constant cortical thickness (global or region-wise) is synthesized by
 %     expanding GM outward from the original WM using a Euclidean distance map.
@@ -27,8 +42,11 @@ function mri_simulate(simu, rf)
 %
 % Parameters:
 %   simu (struct): Simulation parameters. Defaults are applied for missing fields.
-%       - 'name' (string): Filename of the T1w input image. Default: '' (empty)
-%         which triggers an interactive file selection dialog.
+%       - 'name' (char or cellstr): Input image(s). Either a single filename or
+%         a 1x2 cell array {T1w, T2w}. The first must be T1w; the second (if
+%         provided) is used to improve segmentation only. Default: '' (empty),
+%         which triggers an interactive file selection dialog (T1 first, then
+%         optional T2, with matching counts).
 %       - 'pn' (double): Percentage noise level to introduce Gaussian noise.
 %         Default: 3 (percent of WM peak).
 %       - 'rng' (double or []): Seed for the random number generator. Default: 0
@@ -132,6 +150,12 @@ function mri_simulate(simu, rf)
 %                     'resolution', NaN, 'WMH', 2, ...
 %                     'rng', []);
 %       rf = struct('percent', 15, 'type', [3, 42]);
+%       mri_simulate(simu, rf);
+%
+%   Example 5 - Two-modality input (T1 + T2 used for segmentation only)
+%       simu = struct('name', {'colin27_t1_tal_hires.nii', 'colin27_t1_to_t2_tal_hires.nii'}, ...
+%                     'pn', 3, 'resolution', NaN);
+%       rf   = struct('percent', 20, 'type', 'A');
 %       mri_simulate(simu, rf);
 %
 % TODO: simulation of motion artefacts using FFT and shift of phase information
