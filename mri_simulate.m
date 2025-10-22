@@ -158,20 +158,52 @@ else, rf = cat_io_checkinopt(rf, def); end
 
 % call tool interactively
 if isempty(simu.name)
-  P = spm_select(Inf, 'image', 'Select images for simulation');
-  n = size(P,1);
+  don = 0;
+  n_images = Inf;
+  for i = 1:2
+    if i==1
+      P = spm_select([0 n_images],'image','Select T1w image(s)');
+      n_images = size(P,1);
+    else
+      P = spm_select([0 n_images],'image','Select T2w image(s) if available');
+    end     
+    if (size(P,1) == 1) && isempty(P(1,:)), don = 1; break; end
+    V{i} = P;
+  end
+  
+  n = size(V{1},1);
   for i=1:n
-    name = deblank(P(i,:));
-    simu.name = name;
+    for j=1:numel(V)
+      simu.name{j} = deblank(V{j}(i,:));
+    end
     mri_simulate(simu, rf);
   end
+end
+
+if ischar(simu.name)
+  simu.name = {simu.name};
+end
+
+if isscalar(simu.name)
+  n_channels = 1;
+else
+  n_channels = 2;
 end
 
 % iterations for correction for regions with too large thickness values
 % not working properly!!!
 n_thickness_corrections = 0;
 
-[pth, name, ~] = spm_fileparts(simu.name);
+[pth, name, ext] = spm_fileparts(simu.name{1});
+if strcmp(ext,'.gz')
+  fname = gunzip(simu.name{1});
+  simu.name = fname;
+  [pth, name, ext] = spm_fileparts(simu.name{1});
+  is_gz = 1;
+else
+  is_gz = 0;
+end
+  
 pth_root = fileparts(which(mfilename));
 
 % name of seg8.mat file that contains SPM12 segmentation parameters
@@ -182,14 +214,21 @@ template_dir = fullfile(spm('dir'),'toolbox','cat12','templates_MNI152NLin2009cA
 
 % call SPM segmentation if necessary and only save the seg8.mat file
 if ~exist(mat_name,'file')
-  fprintf('We have to run SPM segmentation first.\n')
-
-  matlabbatch{1}.spm.spatial.preproc.channel.vols = {simu.name};
-  for i=1:6
-    matlabbatch{1}.spm.spatial.preproc.tissue(i).native = [0 0];
+  if n_channels == 1
+    fprintf('We have to run SPM segmentation first.\n')
+    matlabbatch{1}.spm.spatial.preproc.channel.vols = simu.name;
+  else
+    fprintf('We have to run SPM coregistration and segmentation first.\n')
+    matlabbatch{1}.spm.spatial.coreg.estwrite.ref = {simu.name{1}};
+    matlabbatch{1}.spm.spatial.coreg.estwrite.source = {simu.name{2}};
+    matlabbatch{2}.spm.spatial.preproc.channel(1).vols = {simu.name{1}};
+    matlabbatch{2}.spm.spatial.preproc.channel(2).vols(1) = cfg_dep('Coregister: Estimate & Reslice: Resliced Images', substruct('.','val', '{}',{1}, '.','val', '{}',{1}, '.','val', '{}',{1}, '.','val', '{}',{1}), substruct('.','rfiles'));
   end
   spm_jobman('run',matlabbatch);
   clear matlabbatch
+  for i=1:5
+    spm_unlink(fullfile(pth,['c' num2str(i) name ext]));
+  end
 end
 
 % check that only one of these options is used
@@ -231,15 +270,43 @@ end
 
 % load seg8.mat file and define some parameters
 res = load(mat_name);
-[~, bname, ext] = spm_fileparts(res.image(1).fname);
+
+% get means for GM/WM/CSF
+mn = zeros(3,1);
+res.t1_sel = 1;
+for k=1:3
+  ind = find(res.lkp==k);
+  for j=1:numel(ind)
+    mn(k) = mn(k) + res.mg(ind(j))*res.mn(res.t1_sel,ind(j));
+  end  
+end
+
+% check that indeed T1w data are related to first image by checking
+% intensities CSF < GM < WM
+[~, ind] = sort(mn);
+if ind ~= [3 1 2]
+  res.t1_sel = 2;
+  mn = zeros(3,1);
+  for k=1:3
+    ind = find(res.lkp==k);
+    for j=1:numel(ind)
+      mn(k) = mn(k) + res.mg(ind(j))*res.mn(res.t1_sel,ind(j));
+    end  
+  end
+end
+
+[~, bname, ext] = spm_fileparts(res.image(res.t1_sel).fname);
 res.image(1) = spm_vol(fullfile(pth,[bname ext]));
+idef_name = fullfile(pth, ['iy_' name ext]);
 V = res.image(1);
 d   = V.dim(1:3);
 vx = sqrt(sum(V.mat(1:3,1:3).^2));
 
 % obtain SPM segmentations and write inverse deformation field
-[Ysrc, Ycls] = cat_spm_preproc_write8(res,zeros(max(res.lkp),4),zeros(1,2),[1 0],0,2);
-idef_name = fullfile(pth, ['iy_' name ext]);
+[Ysrc, Ycls] = cat_spm_preproc_write8(res,zeros(max(res.lkp),4),zeros(n_channels,2),[1 0],0,2);
+
+% select the most likely T1w image
+Ysrc = Ysrc(:,:,:,res.t1_sel);
 
 % LAS correction and SANLM denoising
 Ycorr = cat_main_LASsimple(Ysrc,Ycls);
@@ -268,15 +335,6 @@ label_pve = zeros(d, 'single');
 order = [3 1 2];
 for k = 1:3
     label_pve = label_pve + k*(Yseg(:,:,:,order(k)));
-end
-
-% get means for GM/WM/CSF
-mn = zeros(3,1);
-for k=1:3
-  ind = find(res.lkp==k);
-  for j=1:numel(ind)
-    mn(k) = mn(k) + res.mg(ind(j))*res.mn(1,ind(j));
-  end
 end
 
 % load WMH map
@@ -435,6 +493,10 @@ if rf.save
   spm_write_vol(Vres, rf_field);
 end
 
+% zip file again
+if is_gz
+  spm_unlink(simu.name{1});
+end
 
 %==========================================================================
 % function t = transf(B1,B2,B3,T)
@@ -751,11 +813,11 @@ x3 = 1:d(3);
 
 % prepare DCT parameters for bias correction
 chan = struct('B1',[],'B2',[],'B3',[],'T',[],'Nc',[],'Nf',[],'ind',[]);
-d3      = [size(res.Tbias{1}) 1];
+d3      = [size(res.Tbias{res.t1_sel}) 1];
 chan.B3 = spm_dctmtx(d(3),d3(3),x3);
 chan.B2 = spm_dctmtx(d(2),d3(2),x2(1,:)');
 chan.B1 = spm_dctmtx(d(1),d3(1),x1(:,1));
-chan.T  = res.Tbias{1};
+chan.T  = res.Tbias{res.t1_sel};
 
 % output image
 Ysimu = zeros(d, 'single');
@@ -766,7 +828,7 @@ for z = 1:length(x3)
   % Bias corrected image
   f  = spm_sample_vol(res.image(1),x1,x2,o*x3(z),0);
   bf = exp(transf(chan.B1,chan.B2,chan.B3(z,:),chan.T));
-  cr{1} = bf.*f;
+  cr{1} = f;
 
   msk = any((f==0) | ~isfinite(f),3);
 
@@ -775,11 +837,12 @@ for z = 1:length(x3)
   q1  = reshape(q1,[d(1:2),numel(res.mg)]);
   
   % replace classes and means for GM/WM/CSF by external segmentations
+  
   for k=1:3
     ind = find(res.lkp==k);
     for j=1:numel(ind)
       q1(:,:,ind(j)) = vol_seg(:,:,z,k);
-      res.mn(1,ind(j)) = mn(k);
+      res.mn(res.t1_sel,ind(j)) = mn(k);
     end
   end
 
@@ -792,7 +855,7 @@ for z = 1:length(x3)
 
   % sum up over all classes and normalize to sum of 1
   for k=1:K
-    tmp = tmp + res.mn(1,k)*q1(:,:,k)./s;
+    tmp = tmp + res.mn(res.t1_sel,k)*q1(:,:,k)./s;
   end
   tmp(msk) = 1e-3;
   Ysimu(:,:,z) = tmp;
@@ -1026,7 +1089,7 @@ label_pve(label_pve > 4) = 4;
 
 % use mean of GM for additional class
 K   = numel(res.mg);
-intensity_WMH = mean(res.mn(1,res.lkp==1));
+intensity_WMH = mean(res.mn(res.t1_sel,res.lkp==1));
 K = K + 1;
-res.mn(1,K) = intensity_WMH;
+res.mn(res.t1_sel,K) = intensity_WMH;
 
