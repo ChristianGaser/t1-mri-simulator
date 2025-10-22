@@ -33,7 +33,19 @@ function mri_simulate(simu, rf)
 %         for MATLAB's default behavior.
 %       - 'resolution' (double or [x, y, z]): Spatial resolution of the
 %         simulated image. Use 'NaN' for keeping original image resolution
-%       - 'WMH' (logical): Flag to add white matter hyperintensities. 
+%       - 'WMH' (integer or >=1 scalar): Strength of simulated white matter
+%         hyperintensities (WMHs).
+%           0  -> no WMHs
+%           1  -> mild, mainly periventricular patches
+%           2  -> medium extent/contrast
+%           3  -> strong, widespread WMHs
+%         Notes:
+%           • Values >=1 are allowed (not just 1/2/3). Higher values broaden
+%             the WMH extent by reshaping the WMH prior with an exponent
+%             1/(WMH-0.8), and adjust the contribution to the label map by a
+%             scaling of ~1/WMH^0.75 to keep intensities in a plausible range.
+%           • WMHs are constrained to (eroded) WM and modulated by a random
+%             field to produce patchy distributions.
 %       - 'atrophy' (cell): Specifies regions of interest (ROIs) for simulating
 %         atrophy, including atlas name, ROI IDs, and atrophy values. Multiple ROIs 
 %         and the respective atrophy values can be defined. An atrophy value of 
@@ -90,7 +102,7 @@ function mri_simulate(simu, rf)
 %
 %   Example 2 - Advanced simulation with atrophy and custom RF field and 
 %               large slice thickness:
-%       simu = struct('name', 'custom_t1.nii', 'pn', 2,...
+%       simu = struct('name', 'custom_t1.nii', 'pn', 3,...
 %                     'resolution', [0.5, 0.5, 1.5],...
 %                     'rng', []);
 %       simu.atrophy = {'hammers',[28, 29], [2, 3]};
@@ -104,6 +116,13 @@ function mri_simulate(simu, rf)
 %                     'atrophy', [], 'rng', [],...
 %                     'thickness', [1.5 2.0 2.5]);
 %       rf = struct('percent', 20, 'type', 'A');
+%       mri_simulate(simu, rf);
+%
+%   Example 4 - Simulation with custom RF field and added WMHs (medium strength)
+%       simu = struct('name', 'custom_t1.nii', 'pn', 3,...
+%                     'resolution', NaN, 'WMH', 2, ...
+%                     'rng', []);
+%       rf = struct('percent', 15, 'type', [3, 42]);
 %       mri_simulate(simu, rf);
 %
 % TODO: simulation of motion artefacts using FFT and shift of phase information
