@@ -1,84 +1,112 @@
 # mri_simulate
-Simulates MR images with various optional features
+Simulates T1-weighted MR images with optional atrophy, cortical thickness, WMHs, Gaussian noise, and RF B1 inhomogeneities.
 
-## Description
-This function simulates T1-weighted (T1w) or T2-weighted (T2w) MRI images
-based on a high-quality (i.e. 0.5mm spatial resolution) T1w image. By default
-Colin27 is used for simulation. The function allows for the inclusion of various 
-features in the simulated image such as vessels (only for Colin27), white matter 
-hyperintensities (WMHs), Gaussian noise, radiofrequency (RF) B1 inhomogeneities 
-(bias field), and options for atrophy or thickness simulation.
-If you intend to use any other image for simulation you have to run these steps first:
- * call SPM12 segmentation
- * call CAT12 segmentation in expert mode: save GM, WM, and CSF in native space and deformation 
-   field Image->Template (forward)
+## Overview
+`mri_simulate` generates simulated T1-weighted (T1w) images from a high-quality input (e.g., 0.5 mm Colin27 or a custom T1w). It can:
+
+- Add Gaussian noise
+- Apply RF B1 inhomogeneity (predefined A/B/C or simulated fields)
+- Simulate white matter hyperintensities (WMHs)
+- Simulate regional atrophy (atlas-based)
+- Enforce a constant cortical thickness and produce a PVE-like segmentation used for synthesis
+
+Thickness/PVE pipeline:
+- GM is grown outward from WM using an Euclidean distance map to reach a specified thickness (global or 3-region, based on the Hammer atlas).
+- To emulate partial volume effects, the label boundary is shifted over 20 offsets in [-0.25, 0.25] intensity range of the PVE label. Each offset yields a hard label (CSF=1, GM=2, WM=3); averaging across offsets produces a PVE-like label map.
+- The resulting tissue maps replace SPM’s GM/WM/CSF posteriors in synthesis, using SPM’s Gaussian mixture parameters.
+
+The function runs SPM12 segmentation automatically if needed and relies on CAT12 utilities. Ensure SPM12 and CAT12 are on your MATLAB path.
+
+## Requirements
+- MATLAB with SPM12 and CAT12 toolboxes in the path
+- A T1-weighted NIfTI image (default examples use `colin27_t1_tal_hires.nii`)
 
 ## Inputs
-### simu: A structure containing simulation parameters.
+### simu: Simulation parameters (struct)
 
-Parameter | Description
-----------|------------
-name | Name of T1w input image.
-pn | Percentage noise level.
-rng | Controls the random number generator for consistent noise; empty for default behavior.
-resolution | Spatial resolution of the simulated image (either a scalar or an xyz-definition for anisotropic voxel size).
-vessel | Boolean flag to add vessels (for T1 image only).
-WMH | Boolean flag to add white matter hyperintensities.
-T2 | Boolean flag to simulate a T2-weighted image (only possible for Colin27).
-atrophy | Cell structure that specifies atlas, ROIs and values for simulating atrophy within these ROIs. Multiple ROIs and the respective atrophy values can be defined. An atrophy value of 1.5 leads to a GM reduction of about 5, while a value of 2 corresponds to around 10 and 3 to around 15. Please note, that this option takes a lot of time because the atlas labels have to be interpolated using categorical interpolation (i.e. each label seperately). Either thickness or atrophy can be simulated.
-thickness | The WM label of the image is used to add a layer of GM with a defined cortical thickness to have constant thickness. Unlike all other simulations, we can only use the modified label image for the MRI simulation and not the tissue probabilities (which give a more detailed and realistic T1w image). Either a scalar value for global constant thickness or a vector with 3 thickness values can be defined for the occipital and frontal lobes (1st and 3rd values) and the rest of the brain (2nd value). The Hammer atlas is used to define these areas, as well as subcortical areas and the cerebellum, which are excluded from the thickness simulation to obtain a more realistic MRI. Either thickness or atrophy can be simulated.
-save | If set to 1 the ground truth label will be saved.
+Parameter | Description (Default)
+----------|------------------------
+name | T1w input image filename. If empty `''`, an interactive file selector opens. (Default: `''`)
+pn | Gaussian noise level as percent of the WM peak. (Default: `3`)
+rng | RNG seed for reproducible noise; set `[]` for MATLAB default behavior. (Default: `0`)
+resolution | Output voxel size: scalar (applied to x,y,z) or `[x y z]`. `NaN` keeps the original resolution. (Default: `NaN`)
+WMH | Strength of white matter hyperintensities. `0`=off; `1`=mild; `2`=medium; `3`=strong; values `>=1` allowed. Larger values broaden the WMH prior via exponent `1/(WMH-0.8)` and scale the label contribution by `~1/WMH^0.75`. Constrained to (eroded) WM and modulated by a random field. (Default: `0`)
+atrophy | Atrophy specification: `{atlasName, roiIds[], factors[]}`; factors >1 increase CSF (reduce GM) within ROIs. Either thickness or atrophy can be simulated. (Default: `[]`)
+thickness | Cortical thickness in mm. Scalar = global; 3-vector = `[occipital rest frontal]` using Hammer atlas masks. Subcortical/cerebellar regions are excluded from thickness simulation and the original thickness values are kept. Either thickness or atrophy can be simulated. (Default: `0`)
 
-### rf: A structure containing RF bias field parameters.
-Parameter | Description
-----------|------------
-percent | The amplitude of bias field, in percent. Negative values invert the field.
-type | Specifies the bias field type, options are 'A', 'B', or 'C' for predefined fields from MNI or an integer array with two numbers. The first integer value adjusts the local strength of the field by varying maximum frequencies of the FFT. Meaningful values are 1..4, while a value of 3 or 4 corresponds to a bias field of a 7T scanner (without further correction such as in mp2rage). The second integer sets the random generator to that seed value, which allows simulating different bias fields.
-save | If type is a numeric array the simulated bias field can be optionally saved if this value is set to 1.
-       
+### rf: RF bias field parameters (struct)
+
+Parameter | Description (Default)
+----------|------------------------
+percent | Amplitude in percent; negative values invert the field. (Default: `20`)
+type | `'A'|'B'|'C'` (predefined MNI fields) or numeric `[strength rngSeed]` for a simulated field. Strength in `1..4` (3–4 ~ stronger 7T-like). (Default: `[2 0]`)
+save | Save the simulated bias field only when `type` is numeric; ignored for `'A'|'B'|'C'`. (Default: `0`)
 
 ## Defaults
-If 'simu' or 'rf' are not provided, they are set to default values:
+If `simu` and/or `rf` are omitted or partially specified, missing fields are filled with defaults. If `simu.name` is empty, a file selection dialog opens.
 
- simu = struct('name','colin27_t1_tal_hires.nii','pn', 1, 'resolution', 1, 'vessel', 0, 'WMH', 0, 'T2', 0, 'atrophy', [], 'rng', 0, 'save', 1);
- rf = struct('percent', 20, 'type', [2 0]);
+```matlab
+simu = struct('name', '', 'pn', 3, 'resolution', NaN, 'WMH', 0, ...
+              'atrophy', [], 'thickness', 0, 'rng', 0);
+rf   = struct('percent', 20, 'type', [2 0], 'save', 0);
+```
 
-## Output
-The function saves the following images:
-* simulated MRI image file with the specified features and parameters
-* ground truth label with 3 classes
-* ground truth PVE label with 3 classes and 2 mixed classes
-* bias field
+## Outputs
+The function saves:
+- Simulated image: `pn{pn}_{meanRes}mm_{name}{opts}.nii`
+- Simulated masked image: `pn{pn}_{meanRes}mm_m{name}{opts}.nii`
+- Ground-truth PVE label: `label_pve_{meanRes}mm_{name}{opts}.nii`
+- If requested, RF field (simulated only): `{opts}_{meanRes}mm_{name}.nii`
+
+Notes:
+- `{opts}` aggregates options, e.g., `_rf20_A`, `_WMH2`, `_hammers_28_2`, `_thickness1.5mm-2.5mm`.
+- When thickness is used, the label is PVE-like from the boundary jittering averaging.
+- When WMH is used, a 4th label contribution is added (WMH).
 
 ## Usage
+```matlab
 mri_simulate(simu, rf);
+```
 
 ## Examples
 
-### Basic simulation with added vessels and specific noise
-```
-simu = struct('name', 'colin27_t1_tal_hires.nii', 'pn', 3,...
-              'resolution', 0.5, 'vessel', true, 'WMH', false,...
-              'T2', false, 'atrophy', [], 'rng', 42);
-rf = struct('percent', 20, 'type', 'A','save',0);
-mri_simulate(simu, rf);
-```
-### Advanced simulation with atrophy and custom RF field and large slice thickness
-```
-simu = struct('name', 'custom_t1.nii', 'pn', 2,...
-              'resolution', [0.5, 0.5, 1.5], 'vessel', false,...
-              'WMH', true, 'T2', false, 'rng', []);
-simu.atrophy = {'hammers',[28, 29], [2, 3]};
-rf = struct('percent', 15, 'type', [3, 42]);
+### 1) Basic simulation with specific noise and 0.5 mm voxels
+```matlab
+simu = struct('name', 'colin27_t1_tal_hires.nii', 'pn', 3, ...
+              'resolution', 0.5, 'atrophy', [], 'rng', 42);
+rf = struct('percent', 20, 'type', 'A', 'save', 0);
 mri_simulate(simu, rf);
 ```
 
-### Thickness simulation
+### 2) Advanced simulation with atrophy and custom RF field (thicker slices)
+```matlab
+simu = struct('name', 'custom_t1.nii', 'pn', 3, ...
+              'resolution', [0.5, 0.5, 1.5], 'rng', []);
+simu.atrophy = {'hammers', [28, 29], [2, 3]};
+rf = struct('percent', 15, 'type', [3, 42], 'save', 0);
+mri_simulate(simu, rf);
 ```
-simu = struct('name', 'colin27_t1_tal_hires.nii', 'pn', 3,...
-              'resolution', 0.5, 'vessel', false,...
-              'WMH', false, 'T2', false, 'atrophy', [], 'rng', [],...
+
+### 3) Thickness simulation (region-wise values, original resolution)
+```matlab
+simu = struct('name', 'colin27_t1_tal_hires.nii', 'pn', 3, ...
+              'resolution', NaN, 'atrophy', [], 'rng', [], ...
               'thickness', [1.5 2.0 2.5]);
-rf = struct('percent', 20, 'type', 'A');
+rf = struct('percent', 20, 'type', 'A', 'save', 0);
+mri_simulate(simu, rf);
+```
+
+### 4) WMH simulation (medium strength) with simulated RF field
+```matlab
+simu = struct('name', 'custom_t1.nii', 'pn', 3, 'resolution', NaN, ...
+              'WMH', 2, 'rng', []);
+rf = struct('percent', 15, 'type', [3, 42], 'save', 0);
+mri_simulate(simu, rf);
+```
+
+### 5) Interactive mode (choose input via dialog)
+```matlab
+simu = struct('name', '');   % empty name triggers interactive selection
+rf   = struct('percent', 20, 'type', [2 0], 'save', 0);
 mri_simulate(simu, rf);
 ```
