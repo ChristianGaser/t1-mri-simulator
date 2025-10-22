@@ -3,10 +3,10 @@ function mri_simulate(simu, rf)
 %
 % Overview:
 %   `mri_simulate` generates simulated MRI images, allowing for T1-weighted
-%   (T1w) imaging simulations. It employs a high-resolution
-%   (e.g., 0.5mm) T1w image, typically Colin27, as a base. Users can introduce
-%   various artifacts and features like white matter hyperintensities
-%   (WMHs), Gaussian noise, and RF B1 inhomogeneities. 
+%   (T1w) imaging simulations. It employs a high-quality (high-resolution, low
+%   noise) T1w image as a base. Users can introduce various artifacts and 
+%   features like white matter hyperintensities (WMHs), Gaussian noise, and 
+%   RF B1 inhomogeneities. 
 %   It supports simulations of atrophy or cortical thickness modifications. 
 %   Preprocessing with SPM12 segmentation is required for custom images.
 %
