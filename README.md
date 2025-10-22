@@ -104,9 +104,10 @@ rf = struct('percent', 15, 'type', [3, 42], 'save', 0);
 mri_simulate(simu, rf);
 ```
 
-### 5) Interactive mode (choose input via dialog)
+### 5) Interactive mode for example 4:
 ```matlab
-simu = struct('name', '');   % empty name triggers interactive selection
-rf   = struct('percent', 20, 'type', [2 0], 'save', 0);
+simu = struct('pn', 3, 'resolution', NaN, ...
+              'WMH', 2, 'rng', []);
+rf = struct('percent', 15, 'type', [3, 42], 'save', 0);
 mri_simulate(simu, rf);
 ```
