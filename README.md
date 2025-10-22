@@ -78,7 +78,7 @@ rf = struct('percent', 20, 'type', 'A', 'save', 0);
 mri_simulate(simu, rf);
 ```
 
-### 2) Advanced simulation with atrophy and custom RF field (thicker slices)
+### 2) Advanced simulation with atrophy (2% in left middle frontal gyrus and 3% in right middle frontal gyrus based on Hammers atlas), custom RF field and thicker slices
 ```matlab
 simu = struct('name', 'custom_t1.nii', 'pn', 3, ...
               'resolution', [0.5, 0.5, 1.5], 'rng', []);

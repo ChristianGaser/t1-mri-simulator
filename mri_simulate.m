@@ -108,8 +108,9 @@ function mri_simulate(simu, rf)
 %       rf = struct('percent', 20, 'type', 'A','save',0);
 %       mri_simulate(simu, rf);
 %
-%   Example 2 - Advanced simulation with atrophy and custom RF field and 
-%               large slice thickness:
+%   Example 2 - Advanced simulation with atrophy (2% in left middle frontal gyrus 
+%               and 3% in right middle frontal gyrus based on Hammers atlas), 
+%               custom RF field and thicker slices: 
 %       simu = struct('name', 'custom_t1.nii', 'pn', 3,...
 %                     'resolution', [0.5, 0.5, 1.5],...
 %                     'rng', []);
@@ -822,7 +823,7 @@ function [Ysimu, rf_field] = add_bias_field(Ysimu, rf, idef_name, pth)
 
 fprintf('Transform RF field to native space.\n');
 % warp defined rf field to native space
-rf_name = fullfile(pth,['rf100_' rf.type '.nii']);
+rf_name = fullfile(pth,['rf100_' rf.type '.nii.gz']);
 rf_field = cat_vol_defs(struct('field1',{{idef_name}},'images',{{rf_name}},'interp',1,'modulate',0));
 rf_field = single(rf_field{1}{1});
 
