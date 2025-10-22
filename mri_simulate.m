@@ -823,7 +823,7 @@ function [Ysimu, rf_field] = add_bias_field(Ysimu, rf, idef_name, pth)
 
 fprintf('Transform RF field to native space.\n');
 % warp defined rf field to native space
-rf_name = fullfile(pth,['rf100_' rf.type '.nii.gz']);
+rf_name = fullfile(pth,['rf100_' rf.type '.nii']);
 rf_field = cat_vol_defs(struct('field1',{{idef_name}},'images',{{rf_name}},'interp',1,'modulate',0));
 rf_field = single(rf_field{1}{1});
 
