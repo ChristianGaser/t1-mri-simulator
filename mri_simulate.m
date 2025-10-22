@@ -109,7 +109,7 @@ function mri_simulate(simu, rf)
 % TODO: simulation of motion artefacts using FFT and shift of phase information
 
 % Default simulation parameters
-def.name       = 'colin27_t1_tal_hires.nii';
+def.name       = '';
 def.pn         = 3;
 def.resolution = NaN;
 def.WMH        = 0;
@@ -128,7 +128,19 @@ def.save       = 0;
 if nargin < 2, rf = def;
 else, rf = cat_io_checkinopt(rf, def); end
 
+% call tool interactively
+if isempty(simu.name)
+  P = spm_select(Inf, 'image', 'Select images for simulation');
+  n = size(P,1);
+  for i=1:n
+    name = deblank(P(i,:));
+    simu.name = name;
+    mri_simulate(simu, rf);
+  end
+end
+
 % iterations for correction for regions with too large thickness values
+% not working properly!!!
 n_thickness_corrections = 0;
 
 [pth, name, ~] = spm_fileparts(simu.name);
@@ -140,11 +152,14 @@ mat_name = fullfile(pth, [name '_seg8.mat']);
 % CAT12 template dir is later used for defining atrophy atlas
 template_dir = fullfile(spm('dir'),'toolbox','cat12','templates_MNI152NLin2009cAsym');
 
-% call SPM segmentation if necessary
+% call SPM segmentation if necessary and only save the seg8.mat file
 if ~exist(mat_name,'file')
   fprintf('We have to run SPM segmentation first.\n')
 
   matlabbatch{1}.spm.spatial.preproc.channel.vols = {simu.name};
+  for i=1:6
+    matlabbatch{1}.spm.spatial.preproc.tissue(i).native = [0 0];
+  end
   spm_jobman('run',matlabbatch);
   clear matlabbatch
 end
