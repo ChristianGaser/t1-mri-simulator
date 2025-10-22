@@ -922,7 +922,6 @@ Ysimu = rf_field.*Ysimu;
 %   5) Update label_pve by adding 2*WMH and clipping to max class label 4,
 %      thereby introducing an additional WMH class contribution.
 %   6) Extend the GMM by adding a WMH class intensity equal to the GM mean
-%      (heuristic choice used for synthesis).
 %
 % Notes
 %   - Class encoding after this step: CSF=1, GM=2, WM=3, WMH=4.
@@ -979,7 +978,7 @@ WMH = WMH/max(WMH(:));
 
 % correct PVE label and add additional WMH class (which should be a
 % increased in intensities)
-label_pve = label_pve + 2*WMH;
+label_pve = label_pve + 5*WMH/strength.^0.75;
 label_pve(label_pve > 4) = 4;
 
 % use mean of GM for additional class
