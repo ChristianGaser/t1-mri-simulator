@@ -26,13 +26,17 @@ function mri_simulate(simu, rf)
 %   mri_simulate(simu, rf)
 %
 % Parameters:
-%   simu (struct): Simulation parameters.
-%       - 'name' (string): Filename of the T1w input image.
+%   simu (struct): Simulation parameters. Defaults are applied for missing fields.
+%       - 'name' (string): Filename of the T1w input image. Default: '' (empty)
+%         which triggers an interactive file selection dialog.
 %       - 'pn' (double): Percentage noise level to introduce Gaussian noise.
-%       - 'rng' (double or []): Seed for the random number generator; use []
-%         for MATLAB's default behavior.
+%         Default: 3 (percent of WM peak).
+%       - 'rng' (double or []): Seed for the random number generator. Default: 0
+%         (reproducible noise across runs). Set [] to use MATLAB's default RNG behavior
+%         (non-deterministic across sessions).
 %       - 'resolution' (double or [x, y, z]): Spatial resolution of the
-%         simulated image. Use 'NaN' for keeping original image resolution
+%         simulated image. Default: NaN (keep original resolution). If scalar,
+%         it is applied to all three axes; if a 3-vector, each axis is set individually.
 %       - 'WMH' (integer or >=1 scalar): Strength of simulated white matter
 %         hyperintensities (WMHs).
 %           0  -> no WMHs
@@ -46,6 +50,7 @@ function mri_simulate(simu, rf)
 %             scaling of ~1/WMH^0.75 to keep intensities in a plausible range.
 %           • WMHs are constrained to (eroded) WM and modulated by a random
 %             field to produce patchy distributions.
+%         Default: 0 (disabled).
 %       - 'atrophy' (cell): Specifies regions of interest (ROIs) for simulating
 %         atrophy, including atlas name, ROI IDs, and atrophy values. Multiple ROIs 
 %         and the respective atrophy values can be defined. An atrophy value of 
@@ -53,7 +58,7 @@ function mri_simulate(simu, rf)
 %         to around 10% and 3 to around 15%. Please note, that this option takes 
 %         a lot of time because the atlas labels have to be interpolated using 
 %         categorical interpolation (i.e. each label separetely). Either thickness 
-%         or atrophy can be simulated.
+%         or atrophy can be simulated. Default: [] (disabled).
 %       - 'thickness' (double or [double double double]): Specifies the cortical 
 %         thickness for simulation. The WM label of the image is used to add a 
 %         layer of GM with a defined cortical thickness to have constant thickness. 
@@ -66,19 +71,17 @@ function mri_simulate(simu, rf)
 %         Hammer atlas is used to define these areas, as well as subcortical areas 
 %         and the cerebellum, which are excluded from the thickness simulation to 
 %         obtain a more realistic MRI. Either thickness or atrophy can be simulated.
+%         Default: 0 (disabled).
 %   rf (struct): RF bias field parameters.
 %       - 'percent' (double): Amplitude of the bias field in percentage.
-%         Negative values invert the field.
-%       - 'type' (char or [int, int]): Specifies the bias field type, options are 
-%         'A', 'B', or 'C' for predefined fields from MNI or an integer array with 
-%         two numbers. The first integer value adjusts the local strength of the 
-%         field by varying maximum frequencies of the FFT. Meaningful values are 
-%         1..4, while a value of 3 or 4 corresponds to a bias field of a 7T scanner 
-%         (without further correction such as in mp2rage). The second integer sets 
-%         the random generator to that seed value, which allows simulating different 
-%         bias fields.
-%       - 'save' (logical): Option to save the simulated bias field if 'type' is
-%         numeric and 'save' is set to 1.       
+%         Negative values invert the field. Default: 20.
+%       - 'type' (char or [int, int]): Specifies the bias field type:
+%           'A' | 'B' | 'C' for predefined MNI fields, or [strength, rngSeed]
+%           for a simulated field. Meaningful strength values are 1..4; 3–4
+%           resemble stronger inhomogeneities (e.g., 7T without correction).
+%         Default: [2 0] (simulated field with moderate strength and RNG seed 0).
+%       - 'save' (logical): Save the simulated bias field only when 'type' is
+%         numeric (simulated). Ignored for predefined 'A'/'B'/'C'. Default: 0.
 %
 % Optional Inputs and Defaults:
 %   - If 'simu' and/or 'rf' are omitted, default values are applied internally.
