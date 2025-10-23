@@ -278,7 +278,7 @@ Yp0toC = @(Yp0,c) 1-min(1,abs(Yp0-c));
 Yseg = zeros([dim, 3]);
 
 % Use CAT12 adaptive probability region-growing (APRG) approach for
-% skuu-stripping
+% skull-stripping
 brainmask = skull_strip_APRG(Ysrc, Ycls, res, dim);
 
 seg_order = [2 3 1];
@@ -1062,7 +1062,42 @@ res.mn(1,K) = intensity_WMH;
 
 
 function Yb = skull_strip_APRG(Ysrc, Ycls, res, dim)
-% based on CAT12 adaptive probability region-growing (APRG) approach
+% SKULL_STRIP_APRG - Brain extraction via CAT12 APRG
+%
+% Purpose
+%   Compute a robust brain mask using CAT12's Adaptive Probability Region-Growing
+%   (APRG) method, leveraging SPM/CAT tissue posteriors and data-driven
+%   intensity thresholds from the current image. This improves downstream PVE
+%   label generation by restricting to brain voxels only.
+%
+% Inputs
+%   Ysrc - single(dims): Source image used for threshold estimation (same space
+%          as SPM/CAT outputs from preproc). Typically the first channel.
+%   Ycls - 1x6 cell of uint8(dims): Tissue class posteriors (0..255) from
+%          cat_spm_preproc_write8, in SPM/CAT convention (c1..c6).
+%   res  - struct: SPM/CAT segmentation result with fields used here:
+%              .mn  (means per class/component)
+%              .mg  (mixture weights)
+%              .lkp (lookup of class index per component, 1..6)
+%   dim  - [nx ny nz]: Volume dimensions of the images.
+%
+% Output
+%   Yb   - logical/single(dims): Brain mask estimated by APRG (1=brain, 0=non-brain).
+%
+% Algorithm (summary)
+%   1) Estimate class-specific intensity anchors via weighted means of the GMM
+%      parameters (clsint for CSF/GM/WM).
+%   2) Build a 4D stack P(:,:,:,1..6) from Ycls (uint8 posteriors), as required
+%      by CAT12’s APRG routine.
+%   3) Derive robust thresholds for WM and a central matter (CM) value using the
+%      WM posterior median within Ysrc, which mitigates issues in presence of WMHs.
+%   4) Call cat_main_APRG(Ysrc, P, res, T3th) to obtain the brain mask.
+%
+% Notes
+%   - Assumes T1-like contrast (WM > GM > CSF) for threshold reasoning; a median
+%     WM intensity is used to be robust to WMHs.
+%   - Requires CAT12 on the MATLAB path; uses cat_main_APRG.
+%   - The output mask matches the input volume dimensions and orientation.
 
 clsint = @(x) round( sum(res.mn(res.lkp==x) .* res.mg(res.lkp==x)') * 10^5)/10^5;
 
