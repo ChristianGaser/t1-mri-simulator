@@ -197,7 +197,6 @@ template_dir = fullfile(spm('dir'),'toolbox','cat12','templates_MNI152NLin2009cA
 
 % call SPM segmentation if necessary and only save the seg8.mat file
 if ~exist(mat_name,'file')
-  fprintf('We have to run SPM segmentation first.\n')
   matlabbatch{1}.spm.spatial.preproc.channel.vols = {simu.name};
   spm_jobman('run',matlabbatch);
   clear matlabbatch
@@ -249,7 +248,7 @@ end
 res = load(mat_name);
 
 if size(res.mn,1) > 1
-  fprintf('Multi-modal segmentation is not recommend! Try again to segment the image using T1w data only.\n');
+  fprintf('Multi-modal segmentation is not recommended! Try again to segment the image using T1w data only.\n');
 end
 
 % get means for GM/WM/CSF
@@ -267,7 +266,7 @@ if ind ~= [3 1 2]
   fprintf('Warning: No typical T1w intensities were found. Please note that segmentation quality can be much lower for non T1w data.\n');
   if simu.WMH
     simu.WMH = 0;
-    fprintf('Warning: WMHs can be only simulated for T1w data. WMH ption was therefore disabled.\n');
+    fprintf('Warning: WMHs can be only simulated for T1w data. WMH option was therefore disabled.\n');
   end
 end
 
@@ -476,6 +475,8 @@ spm_unlink(idef_name);
 if is_gz
   spm_unlink(simu.name);
 end
+
+fprintf('================================================================================\n');
 
 %==========================================================================
 % function t = transf(B1,B2,B3,T)
