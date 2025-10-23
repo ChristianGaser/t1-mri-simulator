@@ -166,16 +166,17 @@ if isempty(simu.name)
     simu.name = deblank(P(i,:));
     mri_simulate(simu, rf);
   end
+  return
 end
 
 % iterations for correction for regions with too large thickness values
 % not working properly!!!
 n_thickness_corrections = 0;
 
-[pth, name, ext] = spm_fileparts(simu.name);
+[pth, name, ext, num] = spm_fileparts(simu.name);
 if strcmp(ext,'.gz')
-  fname = gunzip(simu.name);
-  simu.name = fname;
+  fname = gunzip(fullfile(pth, [name ext]))
+  simu.name = fname{1};
   [pth, name, ext] = spm_fileparts(simu.name);
   is_gz = 1;
 else
@@ -193,7 +194,7 @@ template_dir = fullfile(spm('dir'),'toolbox','cat12','templates_MNI152NLin2009cA
 % call SPM segmentation if necessary and only save the seg8.mat file
 if ~exist(mat_name,'file')
   fprintf('We have to run SPM segmentation first.\n')
-  matlabbatch{1}.spm.spatial.preproc.channel.vols = simu.name;
+  matlabbatch{1}.spm.spatial.preproc.channel.vols = {simu.name};
   spm_jobman('run',matlabbatch);
   clear matlabbatch
 
@@ -243,6 +244,10 @@ end
 % load seg8.mat file and define some parameters
 res = load(mat_name);
 
+if size(res.mn,1) > 1
+  fprintf('Multi-modal segmentation is not recommend! Try again to segment the image using T1w data only.\n');
+end
+
 % get means for GM/WM/CSF
 mn = zeros(3,1);
 for k=1:3
@@ -250,6 +255,16 @@ for k=1:3
   for j=1:numel(ind)
     mn(k) = mn(k) + res.mg(ind(j))*res.mn(1,ind(j));
   end  
+end
+
+% check that it's indeed T1w data by checking CSF < GM < WM
+[~, ind] = sort(mn);
+if ind ~= [3 1 2]
+  fprintf('Warning: No typical T1w intensities were found. Please note that segmentation quality can be much lower for non T1w data.\n');
+  if simu.WMH
+    simu.WMH = 0;
+    fprintf('Warning: WMHs can be only simulated for T1w data. WMH ption was therefore disabled.\n');
+  end
 end
 
 [~, bname, ext] = spm_fileparts(res.image(1).fname);
@@ -262,8 +277,11 @@ vx = sqrt(sum(V.mat(1:3,1:3).^2));
 % obtain SPM segmentations and write inverse deformation field
 [Ysrc, Ycls] = cat_spm_preproc_write8(res,zeros(max(res.lkp),4),zeros(2,2),[1 0],0,2);
 
+% get tissue thresholds for CSF/GM/WM
+T3th = get_tissue_thresholds(Ysrc, Ycls, res);
+
 % LAS correction and SANLM denoising
-Ycorr = cat_main_LASsimple(Ysrc,Ycls);
+Ycorr = cat_main_LASsimple(Ysrc, Ycls, T3th);
 cat_sanlm(Ycorr,3,1);
 
 % Replace GM/WM/CSF segmentation by labels using LAS corrected image
@@ -272,11 +290,12 @@ Yseg = zeros([dim, 3]);
 
 % Use CAT12 adaptive probability region-growing (APRG) approach for
 % skull-stripping
-brainmask = skull_strip_APRG(Ysrc, Ycls, res, dim);
+brainmask = skull_strip_APRG(Ysrc, Ycls, res, dim, T3th);
+Ycorr = Ycorr.*brainmask;
 
 seg_order = [2 3 1];
 for i = 1:3
-    Yseg(:,:,:,i) = Yp0toC(3*Ycorr, seg_order(i)).*brainmask; 
+    Yseg(:,:,:,i) = Yp0toC(3*Ycorr, seg_order(i)); 
 end
 clear Ycls
 
@@ -448,7 +467,8 @@ if rf.save
   spm_write_vol(Vres, rf_field);
 end
 
-% zip file again
+% remove temporary files
+spm_unlink(idef_name);
 if is_gz
   spm_unlink(simu.name);
 end
@@ -1054,7 +1074,7 @@ K = K + 1;
 res.mn(1,K) = intensity_WMH;
 
 
-function Yb = skull_strip_APRG(Ysrc, Ycls, res, dim)
+% function Yb = skull_strip_APRG(Ysrc, Ycls, res, dim, T3th)
 % SKULL_STRIP_APRG - Brain extraction via CAT12 APRG
 %
 % Purpose
@@ -1073,6 +1093,10 @@ function Yb = skull_strip_APRG(Ysrc, Ycls, res, dim)
 %              .mg  (mixture weights)
 %              .lkp (lookup of class index per component, 1..6)
 %   dim  - [nx ny nz]: Volume dimensions of the images.
+%   T3th - 1x3 double: Intensity thresholds [CMth, CSFth, WMth] used by APRG
+%          (derived from get_tissue_thresholds). CMth is a central-matter
+%          threshold between GM and WM, CSFth approximates CSF mean, WMth is a
+%          robust WM anchor.
 %
 % Output
 %   Yb   - logical/single(dims): Brain mask estimated by APRG (1=brain, 0=non-brain).
@@ -1091,23 +1115,64 @@ function Yb = skull_strip_APRG(Ysrc, Ycls, res, dim)
 %     WM intensity is used to be robust to WMHs.
 %   - Requires CAT12 on the MATLAB path; uses cat_main_APRG.
 %   - The output mask matches the input volume dimensions and orientation.
+%==========================================================================
+function Yb = skull_strip_APRG(Ysrc, Ycls, res, dim, T3th)
 
-clsint = @(x) round( sum(res.mn(res.lkp==x) .* res.mg(res.lkp==x)') * 10^5)/10^5;
-
+% we need a 4D array for cat_main_APRG
 P = zeros([dim 6],'uint8');
 for i=1:6
   P(:,:,:,i) = Ycls{i};
 end
 
+res.isMP2RAGE = 0;
+Yb = cat_main_APRG(Ysrc, P, res, T3th);
+
+
+function T3th = get_tissue_thresholds(Ysrc, Ycls, res)
+% GET_TISSUE_THRESHOLDS - Estimate robust CSF/GM/WM thresholds
+%
+% Purpose
+%   Compute three intensity anchors used by LAS/APRG steps:
+%     - WMth: a robust white-matter threshold derived from the weighted WM
+%       mean (from the GMM) and the median intensity within high WM posterior
+%       voxels to mitigate WMH effects.
+%     - CSFth: an approximation of the CSF intensity anchor from the GMM.
+%     - CMth: a central-matter threshold between GM and WM that adapts to the
+%       current image contrast.
+%
+% Inputs
+%   Ysrc - single(dims): Source image used to compute medians within WM.
+%   Ycls - 1x6 cell of uint8(dims): SPM/CAT posteriors (0..255), where
+%          Ycls{2} corresponds to WM.
+%   res  - struct: SPM/CAT segmentation result providing Gaussian mixture
+%          parameters mn, mg, and lookup lkp.
+%
+% Output
+%   T3th - 1x3 double: [CMth, CSFth, WMth] thresholds used by skull stripping
+%          and LAS normalization routines.
+%
+% Algorithm
+%   1) clsint(k): weighted class mean from the GMM for class k.
+%   2) WMth: max(clsint(WM), median(Ysrc within high WM posterior)).
+%   3) CMth: if intensities are inverted (CSF > WM), use CSF anchor; otherwise
+%      use 2*GMmean - WMth, clipped not to exceed CSF anchor.
+%   4) Return [CMth, CSFmean, WMth].
+%
+% Notes
+%   - Class indices follow SPM/CAT convention (typically: 1=GM, 2=WM, 3=CSF).
+%   - High WM posterior is defined with a conservative threshold (Ycls{2}>192
+%     on 0..255 scale) to obtain a stable median.
+%   - These anchors are designed for T1-like contrast but include a simple
+%     inversion check (CSF > WM) for robustness.
+
+clsint = @(x) round( sum(res.mn(res.lkp==x) .* res.mg(res.lkp==x)') * 10^5)/10^5;
+
 % Use median for WM threshold estimation to avoid problems in case of WMHs
-WMth = double(max( clsint(2) , cat_stat_nanmedian(Ysrc(P(:,:,:,2)>192)))); 
+WMth = double(max(clsint(2), cat_stat_nanmedian(Ysrc(Ycls{2}>192)))); 
 if clsint(3)>clsint(2) % invers
   CMth = clsint(3); 
 else
   CMth = min([clsint(1) - diff([clsint(1),WMth]), clsint(3)]);
 end
+
 T3th = double([CMth, clsint(1), WMth]);
-
-res.isMP2RAGE = 0;
-Yb = cat_main_APRG(Ysrc, P, res, T3th);
-
