@@ -10,21 +10,6 @@ function mri_simulate(simu, rf)
 %   It supports simulations of atrophy or cortical thickness modifications. 
 %   Preprocessing with SPM12 segmentation is required for custom images.
 %
-% Multi-modality inputs (max 2):
-%   - The simulator accepts up to two input modalities. The first must be a
-%     T1-weighted image. The second is optional (e.g., T2-weighted) and is used
-%     only to improve SPM12 segmentation quality via multi-channel segmentation.
-%     Synthesis itself always produces a T1-like image and uses the intensity
-%     model of the first (T1w) channel.
-%   - Provide inputs via `simu.name` as either a string (single T1w) or a
-%     1x2 cell array {t1File, t2File}. In interactive mode, you’ll first be
-%     asked to select T1w image(s), followed by an optional T2w selection; if
-%     multiple images are selected, the counts per modality must match.
-%   - Internally, if two inputs are given, the second image is coregistered to
-%     the first and both are passed to SPM12’s multi-channel segmentation.
-%     The generated files (simulated image, labels, and seg8.mat) are named
-%     according to the first (T1w) image.
-%
 %   Thickness/PVE pipeline (when simu.thickness is set):
 %   - A constant cortical thickness (global or region-wise) is synthesized by
 %     expanding GM outward from the original WM using a Euclidean distance map.
@@ -182,47 +167,23 @@ else, rf = cat_io_checkinopt(rf, def); end
 
 % call tool interactively
 if isempty(simu.name)
-  don = 0;
-  n_images = Inf;
-  for i = 1:2
-    if i==1
-      P = spm_select([0 n_images],'image','Select T1w image(s)');
-      n_images = size(P,1);
-    else
-      P = spm_select([0 n_images],'image','Select T2w image(s) if available');
-    end     
-    if (size(P,1) == 1) && isempty(P(1,:)), don = 1; break; end
-    V{i} = P;
-  end
-  
-  n = size(V{1},1);
-  for i=1:n
-    for j=1:numel(V)
-      simu.name{j} = deblank(V{j}(i,:));
-    end
+  P = spm_select(Inf,'image','Select T1w image(s) for simulation');
+  n_images = size(P,1);
+  for i=1:n_images
+    simu.name = deblank(P(i,:));
     mri_simulate(simu, rf);
   end
-end
-
-if ischar(simu.name)
-  simu.name = {simu.name};
-end
-
-if isscalar(simu.name)
-  n_channels = 1;
-else
-  n_channels = 2;
 end
 
 % iterations for correction for regions with too large thickness values
 % not working properly!!!
 n_thickness_corrections = 0;
 
-[pth, name, ext] = spm_fileparts(simu.name{1});
+[pth, name, ext] = spm_fileparts(simu.name);
 if strcmp(ext,'.gz')
-  fname = gunzip(simu.name{1});
+  fname = gunzip(simu.name);
   simu.name = fname;
-  [pth, name, ext] = spm_fileparts(simu.name{1});
+  [pth, name, ext] = spm_fileparts(simu.name);
   is_gz = 1;
 else
   is_gz = 0;
@@ -238,18 +199,12 @@ template_dir = fullfile(spm('dir'),'toolbox','cat12','templates_MNI152NLin2009cA
 
 % call SPM segmentation if necessary and only save the seg8.mat file
 if ~exist(mat_name,'file')
-  if n_channels == 1
-    fprintf('We have to run SPM segmentation first.\n')
-    matlabbatch{1}.spm.spatial.preproc.channel.vols = simu.name;
-  else
-    fprintf('We have to run SPM coregistration and segmentation first.\n')
-    matlabbatch{1}.spm.spatial.coreg.estwrite.ref = {simu.name{1}};
-    matlabbatch{1}.spm.spatial.coreg.estwrite.source = {simu.name{2}};
-    matlabbatch{2}.spm.spatial.preproc.channel(1).vols = {simu.name{1}};
-    matlabbatch{2}.spm.spatial.preproc.channel(2).vols(1) = cfg_dep('Coregister: Estimate & Reslice: Resliced Images', substruct('.','val', '{}',{1}, '.','val', '{}',{1}, '.','val', '{}',{1}, '.','val', '{}',{1}), substruct('.','rfiles'));
-  end
+  fprintf('We have to run SPM segmentation first.\n')
+  matlabbatch{1}.spm.spatial.preproc.channel.vols = simu.name;
   spm_jobman('run',matlabbatch);
   clear matlabbatch
+
+  % remove native segmentations that were saved
   for i=1:5
     spm_unlink(fullfile(pth,['c' num2str(i) name ext]));
   end
@@ -502,7 +457,7 @@ end
 
 % zip file again
 if is_gz
-  spm_unlink(simu.name{1});
+  spm_unlink(simu.name);
 end
 
 %==========================================================================
