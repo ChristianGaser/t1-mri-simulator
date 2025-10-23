@@ -175,7 +175,7 @@ n_thickness_corrections = 0;
 
 [pth, name, ext, num] = spm_fileparts(simu.name);
 if strcmp(ext,'.gz')
-  fname = gunzip(fullfile(pth, [name ext]))
+  fname = gunzip(fullfile(pth, [name ext]));
   simu.name = fname{1};
   [pth, name, ext] = spm_fileparts(simu.name);
   is_gz = 1;
