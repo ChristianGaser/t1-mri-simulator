@@ -27,11 +27,8 @@ function mri_simulate(simu, rf)
 %
 % Parameters:
 %   simu (struct): Simulation parameters. Defaults are applied for missing fields.
-%       - 'name' (char or cellstr): Input image(s). Either a single filename or
-%         a 1x2 cell array {T1w, T2w}. The first must be T1w; the second (if
-%         provided) is used to improve segmentation only. Default: '' (empty),
-%         which triggers an interactive file selection dialog (T1 first, then
-%         optional T2, with matching counts).
+%       - 'name' (char): T1-weighted input image filename. Default: '' (empty),
+%         which triggers an interactive file selection dialog (T1 only).
 %       - 'pn' (double): Percentage noise level to introduce Gaussian noise.
 %         Default: 3 (percent of WM peak).
 %       - 'rng' (double or []): Seed for the random number generator. Default: 0
@@ -137,11 +134,7 @@ function mri_simulate(simu, rf)
 %       rf = struct('percent', 15, 'type', [3, 42]);
 %       mri_simulate(simu, rf);
 %
-%   Example 5 - Two-modality input (T1 + T2 used for segmentation only)
-%       simu = struct('name', {'colin27_t1_tal_hires.nii', 'colin27_t1_to_t2_tal_hires.nii'}, ...
-%                     'pn', 3, 'resolution', NaN);
-%       rf   = struct('percent', 20, 'type', 'A');
-%       mri_simulate(simu, rf);
+%
 %
 % TODO: simulation of motion artefacts using FFT and shift of phase information
 
