@@ -160,8 +160,12 @@ else, rf = cat_io_checkinopt(rf, def); end
 
 % call tool interactively
 if isempty(simu.name)
-  P = spm_select(Inf,'image','Select T1w image(s) for simulation');
-  n_images = size(P,1);
+  simu.name = spm_select(Inf,'image','Select T1w image(s) for simulation');
+end
+
+n_images = size(simu.name,1);
+if n_images > 1
+  P = simu.name;
   for i=1:n_images
     simu.name = deblank(P(i,:));
     mri_simulate(simu, rf);
@@ -173,7 +177,7 @@ end
 % not working properly!!!
 n_thickness_corrections = 0;
 
-[pth, name, ext, num] = spm_fileparts(simu.name);
+[pth, name, ext, ~] = spm_fileparts(simu.name);
 if strcmp(ext,'.gz')
   fname = gunzip(fullfile(pth, [name ext]));
   simu.name = fname{1};
