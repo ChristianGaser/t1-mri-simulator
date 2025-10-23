@@ -297,40 +297,22 @@ res = load(mat_name);
 
 % get means for GM/WM/CSF
 mn = zeros(3,1);
-res.t1_sel = 1;
 for k=1:3
   ind = find(res.lkp==k);
   for j=1:numel(ind)
-    mn(k) = mn(k) + res.mg(ind(j))*res.mn(res.t1_sel,ind(j));
+    mn(k) = mn(k) + res.mg(ind(j))*res.mn(1,ind(j));
   end  
 end
 
-% check that indeed T1w data are related to first image by checking
-% intensities CSF < GM < WM
-[~, ind] = sort(mn);
-if ind ~= [3 1 2]
-  res.t1_sel = 2;
-  mn = zeros(3,1);
-  for k=1:3
-    ind = find(res.lkp==k);
-    for j=1:numel(ind)
-      mn(k) = mn(k) + res.mg(ind(j))*res.mn(res.t1_sel,ind(j));
-    end  
-  end
-end
-
-[~, bname, ext] = spm_fileparts(res.image(res.t1_sel).fname);
+[~, bname, ext] = spm_fileparts(res.image(1).fname);
 res.image(1) = spm_vol(fullfile(pth,[bname ext]));
 idef_name = fullfile(pth, ['iy_' name ext]);
 V = res.image(1);
-d   = V.dim(1:3);
+dim   = V.dim(1:3);
 vx = sqrt(sum(V.mat(1:3,1:3).^2));
 
 % obtain SPM segmentations and write inverse deformation field
-[Ysrc, Ycls] = cat_spm_preproc_write8(res,zeros(max(res.lkp),4),zeros(n_channels,2),[1 0],0,2);
-
-% select the most likely T1w image
-Ysrc = Ysrc(:,:,:,res.t1_sel);
+[Ysrc, Ycls] = cat_spm_preproc_write8(res,zeros(max(res.lkp),4),zeros(2,2),[1 0],0,2);
 
 % LAS correction and SANLM denoising
 Ycorr = cat_main_LASsimple(Ysrc,Ycls);
@@ -338,12 +320,13 @@ cat_sanlm(Ycorr,3,1);
 
 % Replace GM/WM/CSF segmentation by labels using LAS corrected image
 Yp0toC = @(Yp0,c) 1-min(1,abs(Yp0-c));
-Yseg = zeros([d, 3]);
-brainmask = zeros(d);
+Yseg = zeros([dim, 3]);
+
+% Use CAT12 adaptive probability region-growing (APRG) approach for
+% skuu-stripping
+brainmask = skull_strip_APRG(Ysrc, Ycls, res, dim);
+
 seg_order = [2 3 1];
-for i = 1:3
-  brainmask = brainmask + double(Ycls{i})/255;
-end
 for i = 1:3
     Yseg(:,:,:,i) = Yp0toC(3*Ycorr, seg_order(i)).*brainmask; 
 end
@@ -351,11 +334,11 @@ clear Ycls
 
 % add atrophy to GM by decreasing GM value in ROI and increasing CSF value
 if simu_atrophy
-  Yseg = simulate_atrophy(simu, Yseg, d, template_dir, idef_name);
+  Yseg = simulate_atrophy(simu, Yseg, dim, template_dir, idef_name);
 end
 
 % get ground truth label using GM/WM/CSF
-label_pve = zeros(d, 'single');
+label_pve = zeros(dim, 'single');
 order = [3 1 2];
 for k = 1:3
     label_pve = label_pve + k*(Yseg(:,:,:,order(k)));
@@ -387,11 +370,11 @@ else
 end
 
 if any(simu.thickness)
-  [label_pve, Yseg] = simulate_thickness(label_pve, simu, Yseg, d, ...
+  [label_pve, Yseg] = simulate_thickness(label_pve, simu, Yseg, dim, ...
         template_dir, idef_name, vx, order, n_thickness_corrections);
 end
 
-Ysimu = synthesize_from_segmentation(Yseg, name, res, mn, d, WMH);
+Ysimu = synthesize_from_segmentation(Yseg, name, res, mn, dim, WMH);
 
 % apply either predefined MNI bias field or simulated bias filed before resizing
 % to defined output resolution
@@ -837,11 +820,11 @@ x3 = 1:d(3);
 
 % prepare DCT parameters for bias correction
 chan = struct('B1',[],'B2',[],'B3',[],'T',[],'Nc',[],'Nf',[],'ind',[]);
-d3      = [size(res.Tbias{res.t1_sel}) 1];
+d3      = [size(res.Tbias{1}) 1];
 chan.B3 = spm_dctmtx(d(3),d3(3),x3);
 chan.B2 = spm_dctmtx(d(2),d3(2),x2(1,:)');
 chan.B1 = spm_dctmtx(d(1),d3(1),x1(:,1));
-chan.T  = res.Tbias{res.t1_sel};
+chan.T  = res.Tbias{1};
 
 % output image
 Ysimu = zeros(d, 'single');
@@ -852,7 +835,7 @@ for z = 1:length(x3)
   % Bias corrected image
   f  = spm_sample_vol(res.image(1),x1,x2,o*x3(z),0);
   bf = exp(transf(chan.B1,chan.B2,chan.B3(z,:),chan.T));
-  cr{1} = f;
+  cr{1} = bf.*f;
 
   msk = any((f==0) | ~isfinite(f),3);
 
@@ -861,15 +844,15 @@ for z = 1:length(x3)
   q1  = reshape(q1,[d(1:2),numel(res.mg)]);
   
   % replace classes and means for GM/WM/CSF by external segmentations
-  
   for k=1:3
     ind = find(res.lkp==k);
     for j=1:numel(ind)
       q1(:,:,ind(j)) = vol_seg(:,:,z,k);
-      res.mn(res.t1_sel,ind(j)) = mn(k);
+      res.mn(1,ind(j)) = mn(k);
     end
   end
 
+  % add WMHs as last class
   if ~isempty(WMH)
     q1(:,:,K) = 5*WMH(:,:,z);
   end
@@ -877,11 +860,16 @@ for z = 1:length(x3)
   s   = sum(q1,3);
   tmp = zeros(d(1:2));
 
-  % sum up over all classes and normalize to sum of 1
-  for k=1:K
-    tmp = tmp + res.mn(res.t1_sel,k)*q1(:,:,k)./s;
+  % sum up over first 3 classes and normalize to sum of 1
+  for k=1:find(res.lkp<=3, 1, 'last')
+    tmp = tmp + res.mg(k)*res.mn(1,k)*q1(:,:,k)./s;
   end
+
+  % add remaining 3 BG classes from bias corrected image
+  ind = tmp == 0;
+  tmp(ind) = cr{1}(ind);
   tmp(msk) = 1e-3;
+
   Ysimu(:,:,z) = tmp;
   
   spm_progress_bar('set',z);
@@ -1113,7 +1101,30 @@ label_pve(label_pve > 4) = 4;
 
 % use mean of GM for additional class
 K   = numel(res.mg);
-intensity_WMH = mean(res.mn(res.t1_sel,res.lkp==1));
+intensity_WMH = mean(res.mn(1,res.lkp==1));
 K = K + 1;
-res.mn(res.t1_sel,K) = intensity_WMH;
+res.mn(1,K) = intensity_WMH;
+
+
+function Yb = skull_strip_APRG(Ysrc, Ycls, res, dim)
+% based on CAT12 adaptive probability region-growing (APRG) approach
+
+clsint = @(x) round( sum(res.mn(res.lkp==x) .* res.mg(res.lkp==x)') * 10^5)/10^5;
+
+P = zeros([dim 6],'uint8');
+for i=1:6
+  P(:,:,:,i) = Ycls{i};
+end
+
+% Use median for WM threshold estimation to avoid problems in case of WMHs
+WMth = double(max( clsint(2) , cat_stat_nanmedian(Ysrc(P(:,:,:,2)>192)))); 
+if clsint(3)>clsint(2) % invers
+  CMth = clsint(3); 
+else
+  CMth = min([clsint(1) - diff([clsint(1),WMth]), clsint(3)]);
+end
+T3th = double([CMth, clsint(1), WMth]);
+
+res.isMP2RAGE = 0;
+Yb = cat_main_APRG(Ysrc, P, res, T3th);
 
