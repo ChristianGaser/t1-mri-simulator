@@ -428,7 +428,6 @@ end
 mean_resolution = round(10*mean(simu.resolution))/10;
 
 % write simulated image
-mind = sum(Yseg(:,:,:,1:3),4) > 0.15;
 simu_name = fullfile(pth, sprintf('pn%g_%gmm_%s%s.nii',simu.pn, mean_resolution, name, str));
 fprintf('Save simulated image %s\n', simu_name);
 Vres.fname = simu_name;
@@ -440,6 +439,7 @@ spm_write_vol(Vres, volres);
 simu_name = fullfile(pth, sprintf('pn%g_%gmm_m%s%s.nii',simu.pn, mean_resolution, name, str));
 fprintf('Save simulated masked image %s\n', simu_name);
 Vres.fname = simu_name;
+mind = labelres_pve(:,:,:) > 0.5;
 spm_write_vol(Vres, volres.*mind);
 
 % write ground truth label
