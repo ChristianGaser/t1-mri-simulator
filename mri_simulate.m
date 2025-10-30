@@ -427,7 +427,7 @@ elseif simu.pn > 0
 else
   str1 = '';
 end
-if (exist('rf','var') && rf.percent ~= 0)
+if rf.percent ~= 0
   if isnumeric(rf.type)
     str1 = sprintf('%s_rf%g_%d_%d', str1, rf.percent, rf.type(1), rf.type(2));
   else
@@ -459,17 +459,17 @@ if any(simu.thickness)
   end
 end
 
-str = strrep([str1 '_' str2],'__','_');
+str = strrep([str1 '_' str2 '_'],'__','_');
 if contains(name, '_T1w')
-  new_name = strrep(name,'_T1w',['_desc-' str '_T1w']);
-  new_name_masked = strrep(name,'_T1w',['_desc-' str '_masked_T1w']);
-  new_name_label = strrep(name,'_T1w',['_desc-' str2  '_label-seg']);
-  new_name_bias = strrep(name,'_T1w',['_desc-' str2  '_RFfield']);
+  new_name = strrep(name,'_T1w',['_desc-' str 'T1w']);
+  new_name_masked = strrep(name,'_T1w',['_desc-' str 'masked_T1w']);
+  new_name_label = strrep(name,'_T1w',['_desc-' str2  'label-seg']);
+  new_name_bias = strrep(name,'_T1w',['_desc-' str2  'RFfield']);
 else
   new_name = [name '_desc-' str];
-  new_name_masked = [name '_desc-' str '_masked'];
-  new_name_label = [name '_desc-' str2 '_label-seg'];
-  new_name_bias = [name '_desc-' str2 '_RFfield'];
+  new_name_masked = [name '_desc-' str 'masked'];
+  new_name_label = [name '_desc-' str2 'label-seg'];
+  new_name_bias = [name '_desc-' str2 'RFfield'];
 end
 
 % write simulated image
@@ -490,13 +490,14 @@ fprintf('Save simulated skull-stripped image %s\n', simu_name);
 Vres.fname = simu_name;
 mind = labelres_pve(:,:,:) > 0.5;
 spm_write_vol(Vres, volres.*mind);
+
 % write JSON sidecar with simulation parameters for both images
 try
   gen.Name = 'mri_simulate';
   gen.Version = 'unknown';
   gen.SourceDatasets = {sprintf('%s%s', name, ext)};
 
-  if isfield(simu,'snrWM') && ~isempty(simu.snrWM) && simu.snrWM > 0
+  if simu.snrWM > 0
     SNRval = simu.snrWM;
     NoiseFrac = NaN; % not used when SNR is specified
   else
@@ -514,36 +515,69 @@ try
     thickStr = '';
   end
 
-  simpar.NoiseFraction = NoiseFrac;
-  simpar.SNR = SNRval;
+  if isfinite(NoiseFrac), simpar.NoiseFraction = NoiseFrac; end
+  if isfinite(SNRval), simpar.SNR = SNRval; end
   simpar.VoxelSize = simu.resolution(:)';
-  simpar.BiasFieldStrength = abs(rf.percent)/100;
-  simpar.Thickness = thickStr;
+  simpar.BiasFieldStrength = rf.percent;
+  if rf.percent ~= 0
+      simpar.BiasFieldType = rf.type(1);
+  end
+  if any(simu.thickness)
+    simpar.Thickness = thickStr;
+  end
+  if simu_atrophy
+    if numel(simu.atrophy{2}) > 1
+      simpar.atrophy = sprintf('%s_multi',simu.atrophy{1});
+    else
+      simpar.atrophy = sprintf('%s_%d_%g',simu.atrophy{1},simu.atrophy{2},simu.atrophy{3});
+    end
+  end
+  if simu.WMH
+    simpar.WMHs = simu.WMH;
+  end
 
   meta = struct();
   meta.GeneratedBy = gen;
+  meta.SimulationParameters = simpar;
+
+  % write JSON next to main image using SPM's writer (handles NaN/null nicely)
+  jsonMain = regexprep(simu_name_main,'\.nii(\.gz)?$','.json');
+  spm_jsonwrite(jsonMain, meta);
+  % write JSON next to masked image
+  jsonMasked = regexprep(simu_name_masked,'\.nii(\.gz)?$','.json');
+  spm_jsonwrite(jsonMasked, meta);
+catch ME
+  fprintf('Warning: Failed to write JSON sidecar(s): %s\n', ME.message);
 end
-  label_pve_name = fullfile(pth, sprintf('label_pve_%gmm_%s%s%s.nii', mean_resolution, name, str, WMHstr));
-else
-  label_pve_name = fullfile(pth, sprintf('label_pve_%gmm_%s%s.nii', mean_resolution, name, WMHstr));
+if is_gz
+  gzip(simu_name);
+  spm_unlink(simu_name);
 end
 
 % write ground truth label
+label_pve_name = fullfile(pth, [new_name_label '.nii']);
 fprintf('Save %s\n', label_pve_name);
 Vres.fname = label_pve_name;
 Vres.pinfo = [1/255/3 0 352]';
 Vres.dt    = [4 0];
 spm_write_vol(Vres, labelres_pve);
 if is_gz
+  gzip(label_pve_name);
+  spm_unlink(label_pve_name);
+end
 
 % save simulated bias field if defined
 if rf.save
+  rf_name = fullfile(pth, [new_name_bias '.nii']);
   fprintf('Save %s\n', rf_name);
   Vres.fname = rf_name;
   Vres.pinfo = [1/max(rf_field(:)) 0 352]';
   Vres.dt    = [2 0];
   spm_write_vol(Vres, rf_field);
   if is_gz
+    gzip(rf_name);
+    spm_unlink(rf_name);
+  end
 end
 
 % remove temporary files
