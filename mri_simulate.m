@@ -30,14 +30,14 @@ function mri_simulate(simu, rf)
 %       - 'name' (char): T1-weighted input image filename. Default: '' (empty),
 %         which triggers an interactive file selection dialog (T1 only).
 %       - 'pn' (double): Percentage noise level (Gaussian) relative to the WM
-%         mean intensity. Ignored if 'snrWM' > 0. Default: 3 (percent of WM).
+%         mean intensity. Ignored if 'snrWM' > 0. Default: 0 (percent of WM).
 %       - 'snrWM' (double): If >0, adds Rician noise at a user-defined SNR for
 %         white matter. Uses the (noise-free) WM mean to compute the complex
 %         noise sigma via sigma = WMmean / snrWM, and generates magnitude
-%         Rician noise: sqrt((S + n1).^2 + n2.^2). Default: 0 (disabled).
-%       - 'rng' (double or []): Seed for the random number generator. Default: 0
-%         (reproducible noise across runs). Set [] to use MATLAB's default RNG behavior
-%         (non-deterministic across sessions).
+%         Rician noise: sqrt((S + n1).^2 + n2.^2). Default: 20.
+%       - 'rng' (double, NaN or []): Seed for the random number generator. Default: NaN
+%         (use filename to obtain reproducible noise across runs). Set [] to use 
+%         MATLAB's default RNG behavior (non-deterministic across sessions).
 %       - 'resolution' (double or [x, y, z]): Spatial resolution of the
 %         simulated image. Default: NaN (keep original resolution). If scalar,
 %         it is applied to all three axes; if a 3-vector, each axis is set individually.
@@ -105,17 +105,16 @@ function mri_simulate(simu, rf)
 %       mri_simulate(simu, rf);
 %
 % Examples:
-%   Example 1 - Basic simulation with specific noise with 0.5mm voxel size:
-%       simu = struct('name', 'colin27_t1_tal_hires.nii', 'pn', 3,...
-%                     'resolution', 0.5,...
-%                     'atrophy', [], 'rng', 42);
+%   Example 1 - Basic simulation with specific SNR with 0.5mm voxel size:
+%       simu = struct('name', 'colin27_t1_tal_hires.nii', 'snrWM', 20,...
+%                     'resolution', 0.5,'atrophy', [], 'rng', 42);
 %       rf = struct('percent', 20, 'type', 'A','save',0);
 %       mri_simulate(simu, rf);
 %
 %   Example 2 - Advanced simulation with atrophy (2% in left middle frontal gyrus 
 %               and 3% in right middle frontal gyrus based on Hammers atlas), 
 %               custom RF field and thicker slices: 
-%       simu = struct('name', 'custom_t1.nii', 'pn', 3,...
+%       simu = struct('name', 'custom_t1.nii', 'snrWM', 20,...
 %                     'resolution', [0.5, 0.5, 1.5],...
 %                     'rng', []);
 %       simu.atrophy = {'hammers',[28, 29], [2, 3]};
@@ -123,7 +122,7 @@ function mri_simulate(simu, rf)
 %       mri_simulate(simu, rf);
 %
 %   Example 3 - Thickness simulation with 3 different thickness values using 
-%   original voxel size:
+%   original voxel size and added 3% Gaussian noise:
 %       simu = struct('name', 'colin27_t1_tal_hires.nii', 'pn', 3,...
 %                     'resolution', NaN,...
 %                     'atrophy', [], 'rng', [],...
@@ -144,13 +143,13 @@ function mri_simulate(simu, rf)
 
 % Default simulation parameters
 def.name       = '';
-def.pn         = 3;
+def.pn         = 0;
 def.resolution = NaN;
 def.WMH        = 0;
 def.atrophy    = [];
 def.thickness  = 0;
-def.rng        = 0;
-def.snrWM      = 0;
+def.rng        = NaN;
+def.snrWM      = 30;
 
 if nargin < 1, simu = def;
 else, simu = cat_io_checkinopt(simu, def); end
@@ -191,7 +190,12 @@ if strcmp(ext,'.gz')
 else
   is_gz = 0;
 end
-  
+
+% if simu.rng is not defined we use the filename to create a seed
+if isempty(simu.rng) | isnan(simu.rng)
+  simu.rng = sum(double(name));
+end
+
 pth_root = fileparts(which(mfilename));
 
 % name of seg8.mat file that contains SPM12 segmentation parameters
@@ -392,9 +396,7 @@ end
 volres = volres / mx_vol;
 
 % optionally ensure same noise for every trial
-if ~isempty(simu.rng)
-  rng(simu.rng,'twister');
-end
+rng(simu.rng,'twister');
 
 % Add noise:
 % - If simu.snrWM>0: add Rician noise with target WM SNR
@@ -480,8 +482,8 @@ Vres.pinfo = [1 0 352]';
 Vres.dt    = [16 0];
 spm_write_vol(Vres, volres);
 if is_gz
-  gzip(simu.name);
-  spm_unlink(simu.name);
+  gzip(simu_name);
+  spm_unlink(simu_name);
 end
 
 % write simulated masked image
@@ -490,6 +492,10 @@ fprintf('Save simulated skull-stripped image %s\n', simu_name);
 Vres.fname = simu_name;
 mind = labelres_pve(:,:,:) > 0.5;
 spm_write_vol(Vres, volres.*mind);
+if is_gz
+  gzip(simu_name);
+  spm_unlink(simu_name);
+end
 
 % write JSON sidecar with simulation parameters for both images
 try
@@ -537,7 +543,7 @@ try
   end
 
   meta = struct();
-  meta.GeneratedBy = gen;
+  meta.GeneratedBy = {gen};
   meta.SimulationParameters = simpar;
 
   % write JSON next to main image using SPM's writer (handles NaN/null nicely)
@@ -548,10 +554,6 @@ try
   spm_jsonwrite(jsonMasked, meta);
 catch ME
   fprintf('Warning: Failed to write JSON sidecar(s): %s\n', ME.message);
-end
-if is_gz
-  gzip(simu_name);
-  spm_unlink(simu_name);
 end
 
 % write ground truth label
@@ -1147,10 +1149,7 @@ dim = size(WMH);
 % slightly smooth WMH atlas
 spm_smooth(WMH, WMH, 2./vx);
 
-% use filename for obtaining an integer that is used as RNG seed
-[~, fname] = fileparts(res.image(1).fname);
-seed = sum(double(fname));
-rng(seed, 'twister')
+rng(simu.rng, 'twister')
 
 N = 2^round(5); % Define the size of the initial 3D field
 
