@@ -29,8 +29,12 @@ function mri_simulate(simu, rf)
 %   simu (struct): Simulation parameters. Defaults are applied for missing fields.
 %       - 'name' (char): T1-weighted input image filename. Default: '' (empty),
 %         which triggers an interactive file selection dialog (T1 only).
-%       - 'pn' (double): Percentage noise level to introduce Gaussian noise.
-%         Default: 3 (percent of WM peak).
+%       - 'pn' (double): Percentage noise level (Gaussian) relative to the WM
+%         mean intensity. Ignored if 'snrWM' > 0. Default: 3 (percent of WM).
+%       - 'snrWM' (double): If >0, adds Rician noise at a user-defined SNR for
+%         white matter. Uses the (noise-free) WM mean to compute the complex
+%         noise sigma via sigma = WMmean / snrWM, and generates magnitude
+%         Rician noise: sqrt((S + n1).^2 + n2.^2). Default: 0 (disabled).
 %       - 'rng' (double or []): Seed for the random number generator. Default: 0
 %         (reproducible noise across runs). Set [] to use MATLAB's default RNG behavior
 %         (non-deterministic across sessions).
@@ -146,6 +150,7 @@ def.WMH        = 0;
 def.atrophy    = [];
 def.thickness  = 0;
 def.rng        = 0;
+def.snrWM      = 0;
 
 if nargin < 1, simu = def;
 else, simu = cat_io_checkinopt(simu, def); end
@@ -357,7 +362,6 @@ if rf.percent ~= 0
 end
 
 mx_vol = max(Ysimu(:));
-relWM_peak = mn(2)/mx_vol;
 
 % output matrix
 Vres.dim = round(V.dim.*vx./simu.resolution);
@@ -386,18 +390,33 @@ else % we can skip interpolation if voxels size is the same
 end
 
 volres = volres / mx_vol;
-% get higher peak of WM for estimating noise level
-noise_std_dev = relWM_peak * simu.pn / 100;
 
 % optionally ensure same noise for every trial
 if ~isempty(simu.rng)
   rng(simu.rng,'twister');
 end
 
-% generate and add Gaussian noise and correct potential neg. values
-noise = (noise_std_dev) * randn(size(volres));
-volres = volres + noise;
-volres = mx_vol * max(min(volres, 1), 0);
+% Add noise:
+% - If simu.snrWM>0: add Rician noise with target WM SNR
+% - Else: fall back to Gaussian noise using percentage of WM mean
+if isfield(simu,'snrWM') && ~isempty(simu.snrWM) && simu.snrWM > 0
+  % Desired SNR is defined for the underlying complex signal amplitude at WM
+  % Compute complex noise std using absolute WM mean, then convert to normalized units
+  sigma_abs = mn(2) / simu.snrWM;    % absolute-domain sigma (same units as Ysimu)
+  sigma = sigma_abs / mx_vol;        % normalized-domain sigma
+  n1 = sigma * randn(size(volres));
+  n2 = sigma * randn(size(volres));
+  volres = sqrt( (volres + n1).^2 + (n2).^2 );
+  % Clamp and rescale back
+  volres = mx_vol * max(min(volres, 1), 0);
+else
+  % Gaussian noise using percentage of WM mean intensity
+  sigma_abs = (simu.pn/100) * mn(2); % absolute-domain std dev
+  sigma = sigma_abs / mx_vol;        % normalized-domain std dev
+  noise = sigma * randn(size(volres));
+  volres = volres + noise;
+  volres = mx_vol * max(min(volres, 1), 0);
+end
 
 str = '';
 if (exist('rf','var') && rf.percent ~= 0)
