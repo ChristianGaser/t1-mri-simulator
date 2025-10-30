@@ -4,11 +4,18 @@ function mri_simulate(simu, rf)
 % Overview:
 %   `mri_simulate` generates simulated MRI images, allowing for T1-weighted
 %   (T1w) imaging simulations. It employs a high-quality (high-resolution, low
-%   noise) T1w image as a base. Users can introduce various artifacts and 
-%   features like white matter hyperintensities (WMHs), Gaussian noise, and 
-%   RF B1 inhomogeneities. 
+%   noise) T1w image as a base. Users can introduce various artifacts and
+%   features like white matter hyperintensities (WMHs), noise, and RF B1
+%   inhomogeneities.
+%   Noise can be added as either:
+%     • Gaussian noise specified as a percentage of the WM mean (simu.pn)
+%     • Rician magnitude noise at a target WM SNR (simu.snrWM>0)
 %   It supports simulations of atrophy or cortical thickness modifications. 
 %   Preprocessing with SPM12 segmentation is required for custom images.
+%
+%   The function also writes JSON sidecars next to the main and masked images
+%   containing key simulation metadata (tool/version, voxel size, noise/SNR,
+%   RF field parameters, thickness tags), using SPM's spm_jsonwrite.
 %
 %   Thickness/PVE pipeline (when simu.thickness is set):
 %   - A constant cortical thickness (global or region-wise) is synthesized by
@@ -35,9 +42,9 @@ function mri_simulate(simu, rf)
 %         white matter. Uses the (noise-free) WM mean to compute the complex
 %         noise sigma via sigma = WMmean / snrWM, and generates magnitude
 %         Rician noise: sqrt((S + n1).^2 + n2.^2). Default: 20.
-%       - 'rng' (double, NaN or []): Seed for the random number generator. Default: NaN
-%         (use filename to obtain reproducible noise across runs). Set [] to use 
-%         MATLAB's default RNG behavior (non-deterministic across sessions).
+%       - 'rng' (double, NaN or []): Seed for the random number generator. 
+%         Default: NaN (reproducible noise across runs). Set [] to use MATLAB's 
+%         default RNG behavior (non-deterministic across sessions).
 %       - 'resolution' (double or [x, y, z]): Spatial resolution of the
 %         simulated image. Default: NaN (keep original resolution). If scalar,
 %         it is applied to all three axes; if a 3-vector, each axis is set individually.
@@ -97,7 +104,12 @@ function mri_simulate(simu, rf)
 %   See the examples below for constructing minimal 'simu' and 'rf' structs.
 %
 % Outputs:
-%   Simulated MRI image file based on the specified parameters and features.
+%   Simulated MRI image files based on the specified parameters and features:
+%     - Main simulated image (full brain)
+%     - Masked simulated image (brain only)
+%     - Ground-truth PVE label image
+%     - Optional: RF bias field (for simulated fields)
+%     - JSON sidecars for main and masked images with simulation metadata
 %
 % Usage:
 %   To simulate an MRI, specify the simulation (`simu`) and RF bias field
@@ -108,6 +120,7 @@ function mri_simulate(simu, rf)
 %   Example 1 - Basic simulation with specific SNR with 0.5mm voxel size:
 %       simu = struct('name', 'colin27_t1_tal_hires.nii', 'snrWM', 20,...
 %                     'resolution', 0.5,'atrophy', [], 'rng', 42);
+%                     'atrophy', [], 'rng', NaN);
 %       rf = struct('percent', 20, 'type', 'A','save',0);
 %       mri_simulate(simu, rf);
 %
@@ -122,7 +135,7 @@ function mri_simulate(simu, rf)
 %       mri_simulate(simu, rf);
 %
 %   Example 3 - Thickness simulation with 3 different thickness values using 
-%   original voxel size and added 3% Gaussian noise:
+%   original voxel size:
 %       simu = struct('name', 'colin27_t1_tal_hires.nii', 'pn', 3,...
 %                     'resolution', NaN,...
 %                     'atrophy', [], 'rng', [],...
@@ -289,7 +302,7 @@ vx = sqrt(sum(V.mat(1:3,1:3).^2));
 % obtain SPM segmentations and write inverse deformation field
 [Ysrc, Ycls] = cat_spm_preproc_write8(res,zeros(max(res.lkp),4),zeros(2,2),[1 0],0,2);
 
-% get tissue thresholds for CSF/GM/WM
+% get tissue thresholds for CSF/GM/WM (see get_tissue_thresholds for details)
 T3th = get_tissue_thresholds(Ysrc, Ycls, res);
 
 % LAS correction and SANLM denoising
@@ -301,7 +314,7 @@ Yp0toC = @(Yp0,c) 1-min(1,abs(Yp0-c));
 Yseg = zeros([dim, 3]);
 
 % Use CAT12 adaptive probability region-growing (APRG) approach for
-% skull-stripping
+% skull-stripping (uses T3th anchors; see skull_strip_APRG)
 brainmask = skull_strip_APRG(Ysrc, Ycls, res, dim, T3th);
 Ycorr = Ycorr.*brainmask;
 
@@ -462,6 +475,7 @@ if any(simu.thickness)
 end
 
 str = strrep([str1 '_' str2 '_'],'__','_');
+if strcmp(str(1),'_'), str = str(2:end); end
 if contains(name, '_T1w')
   new_name = strrep(name,'_T1w',['_desc-' str 'T1w']);
   new_name_masked = strrep(name,'_T1w',['_desc-' str 'masked_T1w']);
@@ -482,8 +496,8 @@ Vres.pinfo = [1 0 352]';
 Vres.dt    = [16 0];
 spm_write_vol(Vres, volres);
 if is_gz
-  gzip(simu_name);
-  spm_unlink(simu_name);
+  gzip(simu.name);
+  spm_unlink(simu.name);
 end
 
 % write simulated masked image

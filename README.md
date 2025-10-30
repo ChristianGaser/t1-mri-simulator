@@ -1,10 +1,10 @@
 # mri_simulate
-Simulates T1-weighted MR images with optional atrophy, cortical thickness, WMHs, Gaussian noise, and RF B1 inhomogeneities.
+Simulates T1-weighted MR images with optional atrophy, cortical thickness, WMHs, RF B1 inhomogeneities, and noise (Gaussian or Rician at a target WM SNR). Writes JSON sidecars with simulation metadata.
 
 ## Overview
 `mri_simulate` generates simulated T1-weighted (T1w) images from a high-quality input (e.g., 0.5 mm Colin27 or a custom T1w). It can:
 
-- Add Gaussian noise
+- Add noise: Gaussian (% of WM mean) or Rician at target WM SNR
 - Apply RF B1 inhomogeneity (predefined A/B/C or simulated fields)
 - Simulate white matter hyperintensities (WMHs)
 - Simulate regional atrophy (atlas-based)
@@ -28,6 +28,7 @@ Parameter | Description (Default)
 ----------|------------------------
 name | Input image(s). A single T1w filename. (Default: `''`)
 pn | Gaussian noise level as percent of the WM peak. (Default: `3`)
+snrWM | If `>0`, add Rician magnitude noise with target SNR for white matter. Uses WM mean to derive complex noise sigma; when set, `pn` is ignored. (Default: `0`)
 rng | RNG seed for reproducible noise; set `[]` for MATLAB default behavior. (Default: `0`)
 resolution | Output voxel size: scalar (applied to x,y,z) or `[x y z]`. `NaN` keeps the original resolution. (Default: `NaN`)
 WMH | Strength of white matter hyperintensities. `0`=off; `1`=mild; `2`=medium; `3`=strong; values `>=1` allowed. Larger values broaden the WMH prior via exponent `1/(WMH-0.8)` and scale the label contribution by `~1/WMH^0.75`. Constrained to (eroded) WM and modulated by a random field. (Default: `0`)
@@ -46,7 +47,7 @@ save | Save the simulated bias field only when `type` is numeric; ignored for `'
 If `simu` and/or `rf` are omitted or partially specified, missing fields are filled with defaults. If `simu.name` is empty, a file selection dialog opens.
 
 ```matlab
-simu = struct('name', '', 'pn', 3, 'resolution', NaN, 'WMH', 0, ...
+simu = struct('name', '', 'pn', 3, 'snrWM', 0, 'resolution', NaN, 'WMH', 0, ...
               'atrophy', [], 'thickness', 0, 'rng', 0);
 rf   = struct('percent', 20, 'type', [2 0], 'save', 0);
 ```
@@ -57,14 +58,24 @@ The function saves:
 - Simulated masked image: `pn{pn}_{meanRes}mm_m{name}{opts}.nii`
 - Ground-truth PVE label: `label_pve_{meanRes}mm_{name}{opts}.nii`
 - If requested, RF field (simulated only): `{opts}_{meanRes}mm_{name}.nii`
+- JSON sidecars (main and masked images): `{simuFile}.json` including tool metadata and SimulationParameters (voxel size, pn or snrWM, RF settings, thickness tag)
 
 Notes:
+- When `snrWM>0`, filenames use `snr{snrWM}` instead of `pn{pn}`.
 - `{opts}` aggregates options, e.g., `_rf20_A`, `_WMH2`, `_hammers_28_2`, `_thickness1.5mm-2.5mm`.
 - When thickness is used, the label is PVE-like from the boundary jittering averaging.
 - When WMH is used, a 4th label contribution is added (WMH).
 
 ## Usage
 ```matlab
+mri_simulate(simu, rf);
+```
+
+### 1b) Rician noise at target WM SNR
+```matlab
+simu = struct('name', 'colin27_t1_tal_hires.nii', 'snrWM', 30, ...
+              'pn', 0, 'resolution', NaN, 'rng', 0);
+rf = struct('percent', 20, 'type', 'A', 'save', 0);
 mri_simulate(simu, rf);
 ```
 
@@ -110,4 +121,12 @@ simu = struct('pn', 3, 'resolution', NaN, ...
               'WMH', 2, 'rng', []);
 rf = struct('percent', 15, 'type', [3, 42], 'save', 0);
 mri_simulate(simu, rf);
+```
+
+## File Naming Examples
+
+```
+pn3_1.0mm_input_rf20_A.nii                     % Gaussian noise at 3%
+snr30_1.0mm_input_rf20_A.nii                   % Rician noise at SNR=30 in WM
+pn3_res-10mm_input_thickness2.5mm.nii          % With thickness tag
 ```

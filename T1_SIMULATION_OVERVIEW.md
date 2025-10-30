@@ -24,7 +24,7 @@ Add RF bias field (optional)
       ↓
 Resample to target resolution
       ↓
-Add Gaussian noise
+Add noise (Gaussian or Rician at target WM SNR)
       ↓
 Output: Simulated image + ground truth labels
 ```
@@ -126,6 +126,9 @@ Each simulation creates **3-4 output files**:
 
 4. **RF bias field** (if requested): `rf20_A_1.0mm_input.nii`
    - Only for simulated fields
+ 
+ 5. **JSON sidecars**: `{simuFile}.json`
+       - Metadata with tool info and SimulationParameters (voxel size, pn or snrWM, RF settings, thickness)
 
 ---
 
@@ -159,9 +162,9 @@ Each simulation creates **3-4 output files**:
 - Affects image uniformity across space
 - Common in clinical scanners
 
-**Gaussian Noise**
-- Realistic scanner noise
-- Percentage of white matter peak intensity
+**Noise**
+- Gaussian: percentage of white matter mean intensity
+- Rician: target SNR in WM (`snrWM`), magnitude noise from complex Gaussian
 - Reproducible with fixed RNG seed
 
 **Resolution Control**
@@ -251,7 +254,7 @@ Each simulation creates **3-4 output files**:
 
 ### File Naming
 ```
-pn{noise}_{resolution}mm_{input}{options}.nii
+pn{noise}_{resolution}mm_{input}{options}.nii  or  snr{SNR}_{resolution}mm_{input}{options}.nii
 
 Examples:
 pn3_1.0mm_colin27_t1_tal_hires.nii                    → Basic
@@ -260,6 +263,7 @@ pn3_1.0mm_input_rf15_2_42_WMH2.nii                    → Simulated RF + WMH
 pn3_1.0mm_input_hammers_28_2.nii                      → Atrophy in ROI 28
 pn3_1.0mm_input_thickness2.5mm.nii                    → Uniform 2.5mm cortex
 pn3_1.0mm_input_thickness1.5mm-2.5mm.nii             → Regional thickness
+snr30_1.0mm_input_rf20_A.nii                          → Rician noise at WM SNR=30
 ```
 
 ### Label Values
