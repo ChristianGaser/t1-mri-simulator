@@ -399,7 +399,7 @@ end
 % Add noise:
 % - If simu.snrWM>0: add Rician noise with target WM SNR
 % - Else: fall back to Gaussian noise using percentage of WM mean
-if isfield(simu,'snrWM') && ~isempty(simu.snrWM) && simu.snrWM > 0
+if simu.snrWM > 0
   % Desired SNR is defined for the underlying complex signal amplitude at WM
   % Compute complex noise std using absolute WM mean, then convert to normalized units
   sigma_abs = mn(2) / simu.snrWM;    % absolute-domain sigma (same units as Ysimu)
@@ -418,75 +418,132 @@ else
   volres = mx_vol * max(min(volres, 1), 0);
 end
 
-str = '';
+mean_resolution = round(10*mean(simu.resolution));
+
+if simu.snrWM > 0
+  str1 = sprintf('snr%g',simu.snrWM);
+elseif simu.pn > 0
+  str1 = sprintf('pn%g',simu.pn);
+else
+  str1 = '';
+end
 if (exist('rf','var') && rf.percent ~= 0)
   if isnumeric(rf.type)
-    str = sprintf('_rf%g_%d_%d', rf.percent, rf.type(1), rf.type(2));
+    str1 = sprintf('%s_rf%g_%d_%d', str1, rf.percent, rf.type(1), rf.type(2));
   else
-    str = sprintf('_rf%g_%s', rf.percent, rf.type);
+    str1 = sprintf('%s_rf%g_%s', str1, rf.percent, rf.type);
   end
 end
-if simu.WMH
-  str = sprintf('%s_WMH%g', str, simu.WMH);
-end
+
 if simu_atrophy
   if numel(simu.atrophy{2}) > 1
-    str = sprintf('%s_%s_multi',str,simu.atrophy{1});
+    str2 = sprintf('%s_multi',simu.atrophy{1});
   else
-    str = sprintf('%s_%s_%d_%g',str,simu.atrophy{1},simu.atrophy{2},simu.atrophy{3});
+    str2 = sprintf('%s_%d_%g',simu.atrophy{1},simu.atrophy{2},simu.atrophy{3});
   end
+else
+  str2 = '';
+end
+if simu.WMH
+  str2 = sprintf('%s_WMH%g', str2, simu.WMH);
+end
+if change_resolution
+  str2 = sprintf('%s_res-%02dmm',str2,mean_resolution);
 end
 if any(simu.thickness)
+  thickness = round(10*simu.thickness);
   if isscalar(simu.thickness)
-    str = sprintf('%s_thickness%gmm',str,simu.thickness);
+    str2 = sprintf('%s_thickness%02dmm',str2,thickness);
   else
-    str = sprintf('%s_thickness%gmm-%gmm',str,min(simu.thickness),max(simu.thickness));
+    str2 = sprintf('%s_thickness%02dmm-%02dmm',str2,min(thickness),max(thickness));
   end
 end
 
-mean_resolution = round(10*mean(simu.resolution))/10;
+str = strrep([str1 '_' str2],'__','_');
+if contains(name, '_T1w')
+  new_name = strrep(name,'_T1w',['_desc-' str '_T1w']);
+  new_name_masked = strrep(name,'_T1w',['_desc-' str '_masked_T1w']);
+  new_name_label = strrep(name,'_T1w',['_desc-' str2  '_label-seg']);
+  new_name_bias = strrep(name,'_T1w',['_desc-' str2  '_RFfield']);
+else
+  new_name = [name '_desc-' str];
+  new_name_masked = [name '_desc-' str '_masked'];
+  new_name_label = [name '_desc-' str2 '_label-seg'];
+  new_name_bias = [name '_desc-' str2 '_RFfield'];
+end
 
 % write simulated image
-simu_name = fullfile(pth, sprintf('pn%g_%gmm_%s%s.nii',simu.pn, mean_resolution, name, str));
+simu_name = fullfile(pth, [new_name '.nii']); simu_name_main = simu_name;
 fprintf('Save simulated image %s\n', simu_name);
 Vres.fname = simu_name;
 Vres.pinfo = [1 0 352]';
 Vres.dt    = [16 0];
 spm_write_vol(Vres, volres);
+if is_gz
+  gzip(simu.name);
+  spm_unlink(simu.name);
+end
 
 % write simulated masked image
-simu_name = fullfile(pth, sprintf('pn%g_%gmm_m%s%s.nii',simu.pn, mean_resolution, name, str));
-fprintf('Save simulated masked image %s\n', simu_name);
+simu_name = fullfile(pth, [new_name_masked '.nii']); simu_name_masked = simu_name;
+fprintf('Save simulated skull-stripped image %s\n', simu_name);
 Vres.fname = simu_name;
 mind = labelres_pve(:,:,:) > 0.5;
 spm_write_vol(Vres, volres.*mind);
+% write JSON sidecar with simulation parameters for both images
+try
+  gen.Name = 'mri_simulate';
+  gen.Version = 'unknown';
+  gen.SourceDatasets = {sprintf('%s%s', name, ext)};
 
-% write ground truth label
-if simu.WMH
-  WMHstr = sprintf('_WMH%g', simu.WMH);
-else
-  WMHstr = '';
+  if isfield(simu,'snrWM') && ~isempty(simu.snrWM) && simu.snrWM > 0
+    SNRval = simu.snrWM;
+    NoiseFrac = NaN; % not used when SNR is specified
+  else
+    SNRval = NaN;
+    NoiseFrac = simu.pn/100;
+  end
+
+  if any(simu.thickness)
+    if isscalar(simu.thickness)
+      thickStr = sprintf('%.3gmm', simu.thickness);
+    else
+      thickStr = sprintf('%.3g-%.3gmm', min(simu.thickness), max(simu.thickness));
+    end
+  else
+    thickStr = '';
+  end
+
+  simpar.NoiseFraction = NoiseFrac;
+  simpar.SNR = SNRval;
+  simpar.VoxelSize = simu.resolution(:)';
+  simpar.BiasFieldStrength = abs(rf.percent)/100;
+  simpar.Thickness = thickStr;
+
+  meta = struct();
+  meta.GeneratedBy = gen;
 end
-if any(simu.thickness)
   label_pve_name = fullfile(pth, sprintf('label_pve_%gmm_%s%s%s.nii', mean_resolution, name, str, WMHstr));
 else
   label_pve_name = fullfile(pth, sprintf('label_pve_%gmm_%s%s.nii', mean_resolution, name, WMHstr));
 end
 
+% write ground truth label
 fprintf('Save %s\n', label_pve_name);
 Vres.fname = label_pve_name;
 Vres.pinfo = [1/255/3 0 352]';
 Vres.dt    = [4 0];
 spm_write_vol(Vres, labelres_pve);
+if is_gz
 
 % save simulated bias field if defined
 if rf.save
-  rf_name = fullfile(pth, sprintf('%s_%gmm_%s.nii', str(2:end), mean_resolution, name));
   fprintf('Save %s\n', rf_name);
   Vres.fname = rf_name;
   Vres.pinfo = [1/max(rf_field(:)) 0 352]';
   Vres.dt    = [2 0];
   spm_write_vol(Vres, rf_field);
+  if is_gz
 end
 
 % remove temporary files
