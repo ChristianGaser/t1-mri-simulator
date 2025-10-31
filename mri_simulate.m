@@ -91,7 +91,7 @@ function mri_simulate(simu, rf)
 %         Default: 0 (disabled).
 %   rf (struct): RF bias field parameters.
 %       - 'percent' (double): Amplitude of the bias field in percentage.
-%         Negative values invert the field. Default: 20.
+%         Negative values invert the field. Default: 30.
 %       - 'type' (char or [int, int]): Specifies the bias field type:
 %           'A' | 'B' | 'C' for predefined MNI fields, or [strength, rngSeed]
 %           for a simulated field. Meaningful strength values are 1..4; 3–4
@@ -177,7 +177,7 @@ if nargin < 1, simu = def;
 else, simu = cat_io_checkinopt(simu, def); end
 
 % Default bias field parameters
-def.percent    = 20;
+def.percent    = 30;
 def.type       = [2 0];
 def.save       = 0;
 
