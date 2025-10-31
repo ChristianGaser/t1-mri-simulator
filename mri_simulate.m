@@ -45,6 +45,12 @@ function mri_simulate(simu, rf)
 %       - 'rng' (double, NaN or []): Seed for the random number generator. 
 %         Default: NaN (reproducible noise across runs). Set [] to use MATLAB's 
 %         default RNG behavior (non-deterministic across sessions).
+%       - 'contrast' (double): Power-law contrast-change exponent applied to the
+%         simulated image intensities after noise. The image is normalized to
+%         [0,1], transformed as Y.^contrast, and rescaled back to its original
+%         min/max range. Use values >1 to increase contrast, <1 to reduce.
+%         Default: 1 (no change). Meaningful values to simulate contrast
+%         are 0.5 (low contrast) and 2 (high contrast).
 %       - 'resolution' (double or [x, y, z]): Spatial resolution of the
 %         simulated image. Default: NaN (keep original resolution). If scalar,
 %         it is applied to all three axes; if a 3-vector, each axis is set individually.
@@ -119,8 +125,7 @@ function mri_simulate(simu, rf)
 % Examples:
 %   Example 1 - Basic simulation with specific SNR with 0.5mm voxel size:
 %       simu = struct('name', 'colin27_t1_tal_hires.nii', 'snrWM', 20,...
-%                     'resolution', 0.5,'atrophy', [], 'rng', 42);
-%                     'atrophy', [], 'rng', NaN);
+%                     'resolution', 0.5);
 %       rf = struct('percent', 20, 'type', 'A','save',0);
 %       mri_simulate(simu, rf);
 %
@@ -128,8 +133,7 @@ function mri_simulate(simu, rf)
 %               and 3% in right middle frontal gyrus based on Hammers atlas), 
 %               custom RF field and thicker slices: 
 %       simu = struct('name', 'custom_t1.nii', 'snrWM', 20,...
-%                     'resolution', [0.5, 0.5, 1.5],...
-%                     'rng', []);
+%                     'resolution', [0.5, 0.5, 1.5]);
 %       simu.atrophy = {'hammers',[28, 29], [2, 3]};
 %       rf = struct('percent', 15, 'type', [3, 42]);
 %       mri_simulate(simu, rf);
@@ -138,16 +142,20 @@ function mri_simulate(simu, rf)
 %   original voxel size:
 %       simu = struct('name', 'colin27_t1_tal_hires.nii', 'pn', 3,...
 %                     'resolution', NaN,...
-%                     'atrophy', [], 'rng', [],...
 %                     'thickness', [1.5 2.0 2.5]);
 %       rf = struct('percent', 20, 'type', 'A');
 %       mri_simulate(simu, rf);
 %
 %   Example 4 - Simulation with custom RF field and added WMHs (medium strength)
 %       simu = struct('name', 'custom_t1.nii', 'pn', 3,...
-%                     'resolution', NaN, 'WMH', 2, ...
-%                     'rng', []);
+%                     'resolution', NaN, 'WMH', 2);
 %       rf = struct('percent', 15, 'type', [3, 42]);
+%       mri_simulate(simu, rf);
+%
+%   Example 5 - Apply contrast change (power-law, high contrast)
+%       simu = struct('name', 'colin27_t1_tal_hires.nii', 'snrWM', 30, ...
+%                     'resolution', NaN, 'contrast', 2);
+%       rf = struct('percent', 20, 'type', 'A');
 %       mri_simulate(simu, rf);
 %
 %
@@ -161,8 +169,9 @@ def.resolution = NaN;
 def.WMH        = 0;
 def.atrophy    = [];
 def.thickness  = 0;
-def.rng        = NaN;
-def.snrWM      = 30;
+def.rng        = 0;
+def.snrWM      = 20;
+def.contrast   = 1;  % power-law contrast change exponent (1 = unchanged)
 
 if nargin < 1, simu = def;
 else, simu = cat_io_checkinopt(simu, def); end
@@ -284,7 +293,7 @@ end
 
 % check that it's indeed T1w data by checking CSF < GM < WM
 [~, ind] = sort(mn);
-if ind ~= [3 1 2]
+if ~isequal(ind(:).',[3 1 2])
   fprintf('Warning: No typical T1w intensities were found. Please note that segmentation quality can be much lower for non T1w data.\n');
   if simu.WMH
     simu.WMH = 0;
@@ -433,6 +442,19 @@ else
   volres = mx_vol * max(min(volres, 1), 0);
 end
 
+% Apply contrast change (power-law) if requested: normalize to [0,1], apply
+% Y.^x, then rescale back to the original pre-transform min/max intensity.
+if simu.contrast ~= 1
+  vmin = min(volres(:));
+  vmax = max(volres(:));
+  if isfinite(vmin) && isfinite(vmax) && vmax > vmin && simu.contrast > 0
+    v0 = (volres - vmin) / (vmax - vmin);
+    v0 = max(min(v0,1),0);
+    v0 = v0 .^ simu.contrast;
+    volres = v0 * (vmax - vmin) + vmin;
+  end
+end
+
 mean_resolution = round(10*mean(simu.resolution));
 
 if simu.snrWM > 0
@@ -447,6 +469,16 @@ if rf.percent ~= 0
     str1 = sprintf('%s_rf%g_%d_%d', str1, rf.percent, rf.type(1), rf.type(2));
   else
     str1 = sprintf('%s_rf%g_%s', str1, rf.percent, rf.type);
+  end
+end
+if simu.contrast ~= 1
+  switch  simu.contrast
+    case 0.5
+      str1 = sprintf('%s_conLow', str1);
+    case 2
+      str1 = sprintf('%s_conHigh', str1);
+    otherwise
+      str1 = sprintf('%s_con%g', str1, simu.contrast);
   end
 end
 
@@ -474,18 +506,25 @@ if any(simu.thickness)
   end
 end
 
+if ~isempty(str2) & strcmp(str2(1),'_')
+  if length(str2)>1
+    str2 = str2(2:end);
+  else
+    str2 = '';
+  end
+end
 str = strrep([str1 '_' str2 '_'],'__','_');
 if strcmp(str(1),'_'), str = str(2:end); end
 if contains(name, '_T1w')
   new_name = strrep(name,'_T1w',['_desc-' str 'T1w']);
   new_name_masked = strrep(name,'_T1w',['_desc-' str 'masked_T1w']);
-  new_name_label = strrep(name,'_T1w',['_desc-' str2  'label-seg']);
-  new_name_bias = strrep(name,'_T1w',['_desc-' str2  'RFfield']);
+  new_name_label = strrep(name,'_T1w',['_desc-' str2  '_label-seg']);
+  new_name_bias = strrep(name,'_T1w',['_desc-' str2  '_RFfield']);
 else
   new_name = [name '_desc-' str];
   new_name_masked = [name '_desc-' str 'masked'];
-  new_name_label = [name '_desc-' str2 'label-seg'];
-  new_name_bias = [name '_desc-' str2 'RFfield'];
+  new_name_label = [name '_desc-' str2 '_label-seg'];
+  new_name_bias = [name '_desc-' str2 '_RFfield'];
 end
 
 % write simulated image
@@ -496,8 +535,8 @@ Vres.pinfo = [1 0 352]';
 Vres.dt    = [16 0];
 spm_write_vol(Vres, volres);
 if is_gz
-  gzip(simu.name);
-  spm_unlink(simu.name);
+  gzip(simu_name);
+  spm_unlink(simu_name);
 end
 
 % write simulated masked image
@@ -537,6 +576,9 @@ try
 
   if isfinite(NoiseFrac), simpar.NoiseFraction = NoiseFrac; end
   if isfinite(SNRval), simpar.SNR = SNRval; end
+  if isfield(simu,'contrast') && ~isempty(simu.contrast) && simu.contrast ~= 1
+    simpar.ContrastChange = simu.contrast;
+  end
   simpar.VoxelSize = simu.resolution(:)';
   simpar.BiasFieldStrength = rf.percent;
   if rf.percent ~= 0
