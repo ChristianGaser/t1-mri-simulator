@@ -6,6 +6,7 @@ Simulates T1-weighted MR images with optional atrophy, cortical thickness, WMHs,
 
 - Add noise: Gaussian (% of WM mean) or Rician at target WM SNR
 - Apply RF B1 inhomogeneity (predefined A/B/C or simulated fields)
+- Apply contrast change (power-law Y^x)
 - Simulate white matter hyperintensities (WMHs)
 - Simulate regional atrophy (atlas-based)
 - Enforce a constant cortical thickness and produce a PVE-like segmentation used for synthesis
@@ -30,6 +31,7 @@ name | Input image(s). A single T1w filename. (Default: `''`)
 pn | Gaussian noise level as percent of the WM peak. (Default: `3`)
 snrWM | If `>0`, add Rician magnitude noise with target SNR for white matter. Uses WM mean to derive complex noise sigma; when set, `pn` is ignored. (Default: `0`)
 rng | RNG seed for reproducible noise; set `[]` for MATLAB default behavior. (Default: `0`)
+contrast | Power-law exponent for contrast change. Image is normalized to [0,1], transformed as Y.^contrast, then rescaled to original min/max. Meaningful values to simulate contrast are 0.5 (low contrast) and 2 (high contrast). (Default: `1`)
 resolution | Output voxel size: scalar (applied to x,y,z) or `[x y z]`. `NaN` keeps the original resolution. (Default: `NaN`)
 WMH | Strength of white matter hyperintensities. `0`=off; `1`=mild; `2`=medium; `3`=strong; values `>=1` allowed. Larger values broaden the WMH prior via exponent `1/(WMH-0.8)` and scale the label contribution by `~1/WMH^0.75`. Constrained to (eroded) WM and modulated by a random field. (Default: `0`)
 atrophy | Atrophy specification: `{atlasName, roiIds[], factors[]}`; factors >1 increase CSF (reduce GM) within ROIs. Either thickness or atrophy can be simulated. (Default: `[]`)
@@ -47,8 +49,8 @@ save | Save the simulated bias field only when `type` is numeric; ignored for `'
 If `simu` and/or `rf` are omitted or partially specified, missing fields are filled with defaults. If `simu.name` is empty, a file selection dialog opens.
 
 ```matlab
-simu = struct('name', '', 'pn', 3, 'snrWM', 0, 'resolution', NaN, 'WMH', 0, ...
-              'atrophy', [], 'thickness', 0, 'rng', 0);
+simu = struct('name', '', 'pn', 3, 'snrWM', 0, 'contrast', 1, ...
+              'resolution', NaN, 'WMH', 0, 'atrophy', [], 'thickness', 0, 'rng', 0);
 rf   = struct('percent', 20, 'type', [2 0], 'save', 0);
 ```
 
@@ -120,6 +122,14 @@ mri_simulate(simu, rf);
 simu = struct('pn', 3, 'resolution', NaN, ...
               'WMH', 2, 'rng', []);
 rf = struct('percent', 15, 'type', [3, 42], 'save', 0);
+mri_simulate(simu, rf);
+```
+
+### 6) Apply contrast change (power-law)
+```matlab
+simu = struct('name', 'colin27_t1_tal_hires.nii', 'pn', 3, ...
+              'contrast', 1.3, 'resolution', NaN, 'rng', 0);
+rf = struct('percent', 20, 'type', 'A', 'save', 0);
 mri_simulate(simu, rf);
 ```
 

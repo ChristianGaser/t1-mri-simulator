@@ -26,6 +26,8 @@ Resample to target resolution
       ↓
 Add noise (Gaussian or Rician at target WM SNR)
       ↓
+Apply contrast change (power-law Y^x, optional)
+      ↓
 Output: Simulated image + ground truth labels
 ```
 
@@ -162,9 +164,10 @@ Each simulation creates **3-4 output files**:
 - Affects image uniformity across space
 - Common in clinical scanners
 
-**Noise**
+**Noise & Contrast**
 - Gaussian: percentage of white matter mean intensity
 - Rician: target SNR in WM (`snrWM`), magnitude noise from complex Gaussian
+- Contrast change: power-law mapping Y^x after normalizing to [0,1], then rescaled
 - Reproducible with fixed RNG seed
 
 **Resolution Control**
