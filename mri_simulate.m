@@ -466,7 +466,7 @@ else
 end
 if rf.percent ~= 0
   if isnumeric(rf.type)
-    str1 = sprintf('%s_rf%g_%d_%d', str1, rf.percent, rf.type(1), rf.type(2));
+    str1 = sprintf('%s_rf%g_%d', str1, rf.percent, rf.type(1));
   else
     str1 = sprintf('%s_rf%g_%s', str1, rf.percent, rf.type);
   end
