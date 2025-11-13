@@ -210,6 +210,10 @@ end
 n_thickness_corrections = 0;
 
 [pth, name, ext, ~] = spm_fileparts(simu.name);
+if ~exist(fullfile(pth, [name ext]), 'file')
+  fprintf("File %s not found.\n", simu.name);
+  return
+end
 if strcmp(ext,'.gz')
   fname = gunzip(fullfile(pth, [name ext]));
   simu.name = fname{1};
@@ -231,6 +235,7 @@ out_pth = pth;
 if isfield(simu,'derivative') && simu.derivative
   try
     parts = strsplit(pth, filesep);
+    if isempty(parts{1}), parts{1} = filesep; end
     idx_sub = find(strncmp(parts,'sub-',4), 1, 'first');
     if ~isempty(idx_sub) && idx_sub > 1
       % Derivatives at dataset root
