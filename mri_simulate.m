@@ -50,7 +50,7 @@ function mri_simulate(simu, rf)
 %         [0,1], transformed as Y.^contrast, and rescaled back to its original
 %         min/max range. Use values >1 to increase contrast, <1 to reduce.
 %         Default: 1 (no change). Meaningful values to simulate contrast
-%         are 0.5 (low contrast) and 2 (high contrast).
+%         are 0.5 (low contrast) and 1.5 (high contrast).
 %       - 'resolution' (double or [x, y, z]): Spatial resolution of the
 %         simulated image. Default: NaN (keep original resolution). If scalar,
 %         it is applied to all three axes; if a 3-vector, each axis is set individually.
@@ -308,6 +308,9 @@ V = res.image(1);
 dim   = V.dim(1:3);
 vx = sqrt(sum(V.mat(1:3,1:3).^2));
 
+% Save indices of zero values for final setting these areas again to zero
+ind_zero = (spm_read_vols(V) == 0);
+
 % obtain SPM segmentations and write inverse deformation field
 [Ysrc, Ycls] = cat_spm_preproc_write8(res,zeros(max(res.lkp),4),zeros(2,2),[1 0],0,2);
 
@@ -329,9 +332,18 @@ Ycorr = Ycorr.*brainmask;
 
 seg_order = [2 3 1];
 for i = 1:3
-    Yseg(:,:,:,i) = Yp0toC(3*Ycorr, seg_order(i)); 
+  Yseg(:,:,:,i) = Yp0toC(3*Ycorr, seg_order(i));
 end
 clear Ycls
+
+% We have to normalize sum of all tissue probabilities inside mask to one
+Ysum = sum(Yseg, 4);
+ind = Ysum > 0;
+for i = 1:3
+  tmp = Yseg(:,:,:,i);
+  tmp(ind) = tmp(ind)./Ysum(ind);
+  Yseg(:,:,:,i) = tmp;
+end
 
 % add atrophy to GM by decreasing GM value in ROI and increasing CSF value
 if simu_atrophy
@@ -377,7 +389,7 @@ end
 
 Ysimu = synthesize_from_segmentation(Yseg, name, res, mn, dim, WMH);
 
-% apply either predefined MNI bias field or simulated bias filed before resizing
+% apply either predefined MNI bias field or simulated bias field before resizing
 % to defined output resolution
 if rf.percent ~= 0
   if ischar(rf.type)
@@ -399,6 +411,7 @@ Vres.mat = spm_matrix(P);
 % output in defined resolution
 volres   = zeros(Vres.dim);
 labelres_pve = zeros(Vres.dim);
+ind_zero_res = zeros(Vres.dim);
 
 if change_resolution
   for sl = 1:Vres.dim(3)
@@ -409,16 +422,33 @@ if change_resolution
     volres(:,:,sl) = spm_slice_vol(Ysimu,M1,Vres.dim(1:2),-5);
     % and linear interpolation for label image
     labelres_pve(:,:,sl) = spm_slice_vol(label_pve,M1,Vres.dim(1:2),1);
+    % and nn interpolation for zero mask
+    ind_zero_res(:,:,sl) = spm_slice_vol(ind_zero,M1,Vres.dim(1:2),0);
   end
 else % we can skip interpolation if voxels size is the same
   volres = Ysimu;
   labelres_pve = label_pve;
+  ind_zero_res = ind_zero;
 end
+clear Ysimu label_pve ind_zero
 
 volres = volres / mx_vol;
 
 % optionally ensure same noise for every trial
 rng(simu.rng,'twister');
+
+% Apply contrast change (power-law) if requested: normalize to [0,1], apply
+% Y.^x, then rescale back to the original pre-transform min/max intensity.
+if simu.contrast ~= 1
+  vmin = min(volres(:));
+  vmax = max(volres(:));
+  if isfinite(vmin) && isfinite(vmax) && vmax > vmin && simu.contrast > 0
+    v0 = (volres - vmin) / (vmax - vmin);
+    v0 = max(min(v0,1),0);
+    v0 = v0 .^ simu.contrast;
+    volres = v0 * (vmax - vmin) + vmin;
+  end
+end
 
 % Add noise:
 % - If simu.snrWM>0: add Rician noise with target WM SNR
@@ -442,18 +472,8 @@ else
   volres = mx_vol * max(min(volres, 1), 0);
 end
 
-% Apply contrast change (power-law) if requested: normalize to [0,1], apply
-% Y.^x, then rescale back to the original pre-transform min/max intensity.
-if simu.contrast ~= 1
-  vmin = min(volres(:));
-  vmax = max(volres(:));
-  if isfinite(vmin) && isfinite(vmax) && vmax > vmin && simu.contrast > 0
-    v0 = (volres - vmin) / (vmax - vmin);
-    v0 = max(min(v0,1),0);
-    v0 = v0 .^ simu.contrast;
-    volres = v0 * (vmax - vmin) + vmin;
-  end
-end
+% Set original zero values again to zero (i.e. due to defacing, skull-stripping)
+volres(ind_zero_res) = 0;
 
 mean_resolution = round(10*mean(simu.resolution));
 
@@ -475,7 +495,7 @@ if simu.contrast ~= 1
   switch  simu.contrast
     case 0.5
       str1 = sprintf('%s_conLow', str1);
-    case 2
+    case 1.5
       str1 = sprintf('%s_conHigh', str1);
     otherwise
       str1 = sprintf('%s_con%g', str1, simu.contrast);
