@@ -92,6 +92,7 @@ mri_simulate(simu, rf);
 | `name` | Input T1w image file | Any NIfTI file |
 | `pn` | Noise level (% of WM signal) | 0-9 (3 = typical) |
 | `resolution` | Output voxel size in mm | NaN, 0.5, 1.0, [1 1 3] |
+| `contrast` | Contrast-change | 0.5, 1.5 |
 | `WMH` | White matter lesion strength | 0 (off), 1-3 |
 | `atrophy` | Regional GM reduction | `{'atlas', [ROIs], [factors]}` |
 | `thickness` | Cortical thickness in mm | 1.5-2.5 or `[occ, mid, front]` |
