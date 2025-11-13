@@ -45,6 +45,11 @@ function mri_simulate(simu, rf)
 %       - 'rng' (double, NaN or []): Seed for the random number generator. 
 %         Default: NaN (reproducible noise across runs). Set [] to use MATLAB's 
 %         default RNG behavior (non-deterministic across sessions).
+%       - 'derivative' (logical): If true, save outputs under a BIDS-style
+%         derivatives folder at the dataset root, using the pipeline name
+%         'mri_simulate-1.0' and mirroring the subject/session path under it.
+%         Example: root/derivatives/mri_simulate-1.0/sub-*/ses-*/[anat|...]/
+%         Default: 0 (save next to input file).
 %       - 'contrast' (double): Power-law contrast-change exponent applied to the
 %         simulated image intensities after noise. The image is normalized to
 %         [0,1], transformed as Y.^contrast, and rescaled back to its original
@@ -172,6 +177,7 @@ def.thickness  = 0;
 def.rng        = 0;
 def.snrWM      = 20;
 def.contrast   = 1;  % power-law contrast change exponent (1 = unchanged)
+def.derivative = 0;  % save outputs into BIDS derivatives if true
 
 if nargin < 1, simu = def;
 else, simu = cat_io_checkinopt(simu, def); end
@@ -219,6 +225,31 @@ if isempty(simu.rng) | isnan(simu.rng)
 end
 
 pth_root = fileparts(which(mfilename));
+
+% Determine output folder (optionally BIDS derivatives)
+out_pth = pth;
+if isfield(simu,'derivative') && simu.derivative
+  try
+    parts = strsplit(pth, filesep);
+    idx_sub = find(strncmp(parts,'sub-',4), 1, 'first');
+    if ~isempty(idx_sub) && idx_sub > 1
+      % Derivatives at dataset root
+      root_dir = fullfile(parts{1:idx_sub-1});
+      rel_parts = parts(idx_sub:end); % sub-..[/ses-..]/anat/...
+      pipeline_dir = fullfile(root_dir, 'derivatives', 'mri_simulate-1.0');
+      out_pth = fullfile(pipeline_dir, rel_parts{:});
+    else
+      % Fallback: place outputs under derivatives without mirroring
+      root_dir = fileparts(pth);
+      pipeline_dir = fullfile(root_dir, 'derivatives', 'mri_simulate-1.0');
+      out_pth = pipeline_dir;
+    end
+    if ~exist(out_pth,'dir'), mkdir(out_pth); end
+  catch
+    % In case of any issue, fall back to input folder
+    out_pth = pth;
+  end
+end
 
 % name of seg8.mat file that contains SPM12 segmentation parameters
 mat_name = fullfile(pth, [name '_seg8.mat']);
@@ -308,9 +339,6 @@ V = res.image(1);
 dim   = V.dim(1:3);
 vx = sqrt(sum(V.mat(1:3,1:3).^2));
 
-% Save indices of zero values for final setting these areas again to zero
-ind_zero = (spm_read_vols(V) == 0);
-
 % obtain SPM segmentations and write inverse deformation field
 [Ysrc, Ycls] = cat_spm_preproc_write8(res,zeros(max(res.lkp),4),zeros(2,2),[1 0],0,2);
 
@@ -332,18 +360,9 @@ Ycorr = Ycorr.*brainmask;
 
 seg_order = [2 3 1];
 for i = 1:3
-  Yseg(:,:,:,i) = Yp0toC(3*Ycorr, seg_order(i));
+    Yseg(:,:,:,i) = Yp0toC(3*Ycorr, seg_order(i)); 
 end
 clear Ycls
-
-% We have to normalize sum of all tissue probabilities inside mask to one
-Ysum = sum(Yseg, 4);
-ind = Ysum > 0;
-for i = 1:3
-  tmp = Yseg(:,:,:,i);
-  tmp(ind) = tmp(ind)./Ysum(ind);
-  Yseg(:,:,:,i) = tmp;
-end
 
 % add atrophy to GM by decreasing GM value in ROI and increasing CSF value
 if simu_atrophy
@@ -389,7 +408,7 @@ end
 
 Ysimu = synthesize_from_segmentation(Yseg, name, res, mn, dim, WMH);
 
-% apply either predefined MNI bias field or simulated bias field before resizing
+% apply either predefined MNI bias field or simulated bias filed before resizing
 % to defined output resolution
 if rf.percent ~= 0
   if ischar(rf.type)
@@ -411,7 +430,6 @@ Vres.mat = spm_matrix(P);
 % output in defined resolution
 volres   = zeros(Vres.dim);
 labelres_pve = zeros(Vres.dim);
-ind_zero_res = zeros(Vres.dim);
 
 if change_resolution
   for sl = 1:Vres.dim(3)
@@ -422,15 +440,11 @@ if change_resolution
     volres(:,:,sl) = spm_slice_vol(Ysimu,M1,Vres.dim(1:2),-5);
     % and linear interpolation for label image
     labelres_pve(:,:,sl) = spm_slice_vol(label_pve,M1,Vres.dim(1:2),1);
-    % and nn interpolation for zero mask
-    ind_zero_res(:,:,sl) = spm_slice_vol(ind_zero,M1,Vres.dim(1:2),0);
   end
 else % we can skip interpolation if voxels size is the same
   volres = Ysimu;
   labelres_pve = label_pve;
-  ind_zero_res = ind_zero;
 end
-clear Ysimu label_pve ind_zero
 
 volres = volres / mx_vol;
 
@@ -471,9 +485,6 @@ else
   volres = volres + noise;
   volres = mx_vol * max(min(volres, 1), 0);
 end
-
-% Set original zero values again to zero (i.e. due to defacing, skull-stripping)
-volres(ind_zero_res) = 0;
 
 mean_resolution = round(10*mean(simu.resolution));
 
@@ -547,8 +558,8 @@ else
   new_name_bias = [name '_desc-' str2 '_RFfield'];
 end
 
-% write simulated image
-simu_name = fullfile(pth, [new_name '.nii']); simu_name_main = simu_name;
+% write simulated image (optionally to derivatives folder)
+simu_name = fullfile(out_pth, [new_name '.nii']); simu_name_main = simu_name;
 fprintf('Save simulated image %s\n', simu_name);
 Vres.fname = simu_name;
 Vres.pinfo = [1 0 352]';
@@ -560,7 +571,7 @@ if is_gz
 end
 
 % write simulated masked image
-simu_name = fullfile(pth, [new_name_masked '.nii']); simu_name_masked = simu_name;
+simu_name = fullfile(out_pth, [new_name_masked '.nii']); simu_name_masked = simu_name;
 fprintf('Save simulated skull-stripped image %s\n', simu_name);
 Vres.fname = simu_name;
 mind = labelres_pve(:,:,:) > 0.5;
@@ -633,7 +644,7 @@ catch ME
 end
 
 % write ground truth label
-label_pve_name = fullfile(pth, [new_name_label '.nii']);
+label_pve_name = fullfile(out_pth, [new_name_label '.nii']);
 fprintf('Save %s\n', label_pve_name);
 Vres.fname = label_pve_name;
 Vres.pinfo = [1/255/3 0 352]';
@@ -646,7 +657,7 @@ end
 
 % save simulated bias field if defined
 if rf.save
-  rf_name = fullfile(pth, [new_name_bias '.nii']);
+  rf_name = fullfile(out_pth, [new_name_bias '.nii']);
   fprintf('Save %s\n', rf_name);
   Vres.fname = rf_name;
   Vres.pinfo = [1/max(rf_field(:)) 0 352]';
