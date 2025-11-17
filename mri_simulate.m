@@ -1051,6 +1051,11 @@ for z = 1:length(x3)
   
   spm_progress_bar('set',z);
 end
+
+% Sometimes huge values occur due to bias correction in the noisy
+% background and we have to limit values to 98% percentile
+th = prctile(Ysimu(:),98);
+Ysimu(Ysimu>th) = th;
 spm_progress_bar('clear');
 
 
