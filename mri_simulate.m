@@ -563,6 +563,10 @@ else
   new_name_bias = [name '_desc-' str2 '_RFfield'];
 end
 
+% Remove remaining string issues
+new_name_label = strrep(new_name_label,'desc-_','desc-');
+new_name_bias = strrep(new_name_bias,'desc-_','desc-');
+
 % write simulated image (optionally to derivatives folder)
 simu_name = fullfile(out_pth, [new_name '.nii']); simu_name_main = simu_name;
 fprintf('Save simulated image %s\n', simu_name);
