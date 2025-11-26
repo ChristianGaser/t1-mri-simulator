@@ -1374,7 +1374,7 @@ function Yseg = close_WM_GM_holes(Yseg, Ysrc, Ycorr, Ycls, Yy, res, vx_vol)
 % we have to prepare some parameters for cat_main_updateSPM1639
 global cat; cat_defaults;
 job = cat;
-job.extopts.inv_weighting = 0;
+job.extopts.inv_weighting = 0; job.extopts.verb = 0;
 P = zeros([size(Ycls{1}) numel(Ycls)],'uint8');
 for i=1:numel(Ycls), P(:,:,:,i) = Ycls{i}; end
 clear Ycls;
@@ -1385,8 +1385,8 @@ for i=1:6
 end
 noise = 0.03;
 res.image0 = res.image; res.ppe.affreg.skullstripped = 0; res.ppe.affreg.highBG = 0;
-stime  = cat_io_cmd('SPM preprocessing 2 (write)'); if job.extopts.verb>1, fprintf('\n'); end
-stime2 = cat_io_cmd('  Write Segmentation','g5','',job.extopts.verb-1);
+stime  = cat_io_cmd('');
+stime2 = cat_io_cmd('');
 
 [Ysrc,Ycls,Yb] = cat_main_updateSPM1639(Ysrc,P,Yy,tpm,job,res,stime,stime2);
 [Yl1,Ycls] = cat_vol_partvol(Ycorr,Ycls,Yb,Yy,vx_vol,job.extopts,tpm.V,noise,job,false(size(Yb)));
