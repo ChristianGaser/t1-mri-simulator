@@ -170,6 +170,8 @@ function mri_simulate(simu, rf)
 %
 % TODO: simulation of motion artefacts using FFT and shift of phase information
 
+version = '0.9.4';
+
 % Default simulation parameters
 def.name       = '';
 def.pn         = 0;
@@ -180,7 +182,7 @@ def.thickness  = 0;
 def.rng        = 0;
 def.snrWM      = 20;
 def.contrast   = 1;  % power-law contrast change exponent (1 = unchanged)
-def.derivative = 0;  % save outputs into BIDS derivatives if true
+def.derivative = 1;  % save outputs into BIDS derivatives
 def.closeWMHholes = 1; % close WMHs inside deep WM
 
 if nargin < 1, simu = def;
@@ -245,12 +247,12 @@ if isfield(simu,'derivative') && simu.derivative
       % Derivatives at dataset root
       root_dir = fullfile(parts{1:idx_sub-1});
       rel_parts = parts(idx_sub:end); % sub-..[/ses-..]/anat/...
-      pipeline_dir = fullfile(root_dir, 'derivatives', 'mri_simulate-1.0');
+      pipeline_dir = fullfile(root_dir, 'derivatives', ['mri_simulate-' version]);
       out_pth = fullfile(pipeline_dir, rel_parts{:});
     else
       % Fallback: place outputs under derivatives without mirroring
       root_dir = fileparts(pth);
-      pipeline_dir = fullfile(root_dir, 'derivatives', 'mri_simulate-1.0');
+      pipeline_dir = fullfile(root_dir, 'derivatives', ['mri_simulate-' version]);
       out_pth = pipeline_dir;
     end
     if ~exist(out_pth,'dir'), mkdir(out_pth); end
