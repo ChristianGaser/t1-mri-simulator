@@ -59,6 +59,9 @@ function mri_simulate(simu, rf)
 %       - 'resolution' (double or [x, y, z]): Spatial resolution of the
 %         simulated image. Default: NaN (keep original resolution). If scalar,
 %         it is applied to all three axes; if a 3-vector, each axis is set individually.
+%       - 'closeWMHholes' (logical): Detect and fill WMHs in WM and correct
+%         segmenations to obtain a clean simulated image without WMHs (which 
+%         later allows to simulate additional WMHs using the WMH option).
 %       - 'WMH' (integer or >=1 scalar): Strength of simulated white matter
 %         hyperintensities (WMHs).
 %           0  -> no WMHs
@@ -178,6 +181,7 @@ def.rng        = 0;
 def.snrWM      = 20;
 def.contrast   = 1;  % power-law contrast change exponent (1 = unchanged)
 def.derivative = 0;  % save outputs into BIDS derivatives if true
+def.closeWMHholes = 1; % close WMHs inside deep WM
 
 if nargin < 1, simu = def;
 else, simu = cat_io_checkinopt(simu, def); end
@@ -345,7 +349,7 @@ dim   = V.dim(1:3);
 vx = sqrt(sum(V.mat(1:3,1:3).^2));
 
 % obtain SPM segmentations and write inverse deformation field
-[Ysrc, Ycls] = cat_spm_preproc_write8(res,zeros(max(res.lkp),4),zeros(2,2),[1 0],0,2);
+[Ysrc, Ycls, Yy] = cat_spm_preproc_write8(res,zeros(max(res.lkp),4),zeros(2,2),[1 0],0,2);
 
 % get tissue thresholds for CSF/GM/WM (see get_tissue_thresholds for details)
 T3th = get_tissue_thresholds(Ysrc, Ycls, res);
@@ -366,6 +370,11 @@ Ycorr = Ycorr.*brainmask;
 seg_order = [2 3 1];
 for i = 1:3
     Yseg(:,:,:,i) = Yp0toC(3*Ycorr, seg_order(i)); 
+end
+
+% optionally close WMHs within deep WM using CAT12 approach
+if isfield(simu,'closeWMHholes') && simu.closeWMHholes
+  Yseg = close_WM_GM_holes(Yseg, Ysrc, Ycorr, Ycls, Yy, res, vx);
 end
 clear Ycls
 
@@ -1341,6 +1350,68 @@ end
 
 res.isMP2RAGE = 0;
 Yb = cat_main_APRG(Ysrc, P, res, T3th);
+
+
+function Yseg = close_WM_GM_holes(Yseg, Ysrc, Ycorr, Ycls, Yy, res, vx_vol)
+% CLOSE_WM_GM_HOLES - Fill WMHs in WM and correct WM and GM segmentation
+%
+% Purpose
+%   Detect and close WMHs using CAT12 WMH detection
+%
+% Inputs
+%   Yseg   - single(dims,3): current class volumes (CSF/GM/WM-like) derived 
+%            from LAS-corrected intensities.
+%   Ycls   - 1x6 cell of uint8(dims): SPM tissue posteriors (0..255).
+%   res    - segmentation structure from SPM segmentation.
+%   vx_vol - voxel size in mm
+%
+% Output
+%   Yseg   - class volumes with WMHs reassigned to WM, leaving cortex and
+%            and boundaries untouched as much as possible.
+
+% we have to prepare some parameters for cat_main_updateSPM1639
+global cat; cat_defaults;
+job = cat;
+job.extopts.inv_weighting = 0;
+P = zeros([size(Ycls{1}) numel(Ycls)],'uint8');
+for i=1:numel(Ycls), P(:,:,:,i) = Ycls{i}; end
+clear Ycls;
+tpm.dat = cell(6,1);
+tpm.V = res.tpm;
+for i=1:6
+  tpm.dat{i} = spm_read_vols(res.tpm(i));
+end
+noise = 0.03;
+res.image0 = res.image; res.ppe.affreg.skullstripped = 0; res.ppe.affreg.highBG = 0;
+stime  = cat_io_cmd('SPM preprocessing 2 (write)'); if job.extopts.verb>1, fprintf('\n'); end
+stime2 = cat_io_cmd('  Write Segmentation','g5','',job.extopts.verb-1);
+
+[Ysrc,Ycls,Yb] = cat_main_updateSPM1639(Ysrc,P,Yy,tpm,job,res,stime,stime2);
+[Yl1,Ycls] = cat_vol_partvol(Ycorr,Ycls,Yb,Yy,vx_vol,job.extopts,tpm.V,noise,job,false(size(Yb)));
+
+NS = @(Ys,s) Ys==s | Ys==s+1; 
+LAB = job.extopts.LAB;
+Ynwmh = NS(Yl1,LAB.TH) | NS(Yl1,LAB.BG) | NS(Yl1,LAB.HC) | NS(Yl1,LAB.CB) | NS(Yl1,LAB.BS);
+Ynwmh = cat_vol_morph(cat_vol_morph( Ynwmh, 'dd', 8 , vx_vol),'dc',12 , vx_vol) & ...
+        ~cat_vol_morph( NS(Yl1,LAB.VT), 'dd', 4 , vx_vol); 
+Ywmh  = Ycls{7}>0 & ~Ynwmh;
+
+% reassign these WMHs to WM in Yseg
+Yseg(:,:,:,1) = min(Yseg(:,:,:,1), (1 - Ywmh));
+Yseg(:,:,:,2) = max(Yseg(:,:,:,2), Ywmh);
+Yseg(:,:,:,3) = min(Yseg(:,:,:,3), (1 - Ywmh));
+
+% renormalize CSF/GM/WM per voxel to sum <=1 (simple clamp)
+S = sum(Yseg,4);
+mask = S>1;
+if any(mask(:))
+  for k=1:3
+    tmp = Yseg(:,:,:,k);
+    tmp(mask) = tmp(mask) ./ S(mask);
+    Yseg(:,:,:,k) = tmp;
+  end
+end
+
 
 
 function T3th = get_tissue_thresholds(Ysrc, Ycls, res)
