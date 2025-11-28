@@ -41,7 +41,7 @@ function mri_simulate(simu, rf)
 %       - 'snrWM' (double): If >0, adds Rician noise at a user-defined SNR for
 %         white matter. Uses the (noise-free) WM mean to compute the complex
 %         noise sigma via sigma = WMmean / snrWM, and generates magnitude
-%         Rician noise: sqrt((S + n1).^2 + n2.^2). Default: 20.
+%         Rician noise: sqrt((S + n1).^2 + n2.^2). Default: 30.
 %       - 'rng' (double, NaN or []): Seed for the random number generator. 
 %         Default: NaN (reproducible noise across runs). Set [] to use MATLAB's 
 %         default RNG behavior (non-deterministic across sessions).
@@ -180,7 +180,7 @@ def.WMH        = 0;
 def.atrophy    = [];
 def.thickness  = 0;
 def.rng        = 0;
-def.snrWM      = 20;
+def.snrWM      = 30;
 def.contrast   = 1;  % power-law contrast change exponent (1 = unchanged)
 def.derivative = 1;  % save outputs into BIDS derivatives
 def.closeWMHholes = 1; % close WMHs inside deep WM
@@ -1005,7 +1005,7 @@ function Ysimu = synthesize_from_segmentation(vol_seg, name, res, mn, d, WMH)
 % go through all peaks that are defined
 % mainly copied from spm_preproc_write8.m
 
-K   = size(res.mn,2);
+K = size(res.mn,2);
 
 [x1,x2,o] = ndgrid(1:d(1),1:d(2),1);
 x3 = 1:d(3);
